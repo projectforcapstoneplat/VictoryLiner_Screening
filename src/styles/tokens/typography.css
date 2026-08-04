@@ -1,0 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;700&family=Montserrat:wght@200;300;400;600&display=swap');
+:root{
+--font-ui:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--font-display:'Montserrat',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+
+/* weights actually used in the source file */
+--weight-ui-extralight:200;
+--weight-ui-light:300;
+--weight-ui-regular:400;
+--weight-ui-semibold:600;
+--weight-ui-bold:700;
+--weight-display-extralight:200;
+--weight-display-light:300;
+--weight-display-regular:400;
+--weight-display-semibold:600;
+
+/* type scale, exact sizes found in the file (not snapped to a grid) */
+--text-xs:12px;
+--text-sm:14px;
+--text-base:16px;
+--text-md:20px;
+--text-lg:22px;
+--text-xl:24px;
+--text-2xl:26px;
+--text-3xl:28px;
+--text-4xl:30px;
+--text-5xl:36px;
+--text-6xl:45px;
+--text-7xl:47px;
+}
