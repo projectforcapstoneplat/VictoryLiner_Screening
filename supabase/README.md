@@ -22,6 +22,18 @@ Then repeat with `supabase/migrations/0002_applications.sql` in a new query. Thi
 
 Then repeat once more with `supabase/migrations/0003_structured_resume.sql`. This replaces the file-upload column with structured fields (`work_experience`, `education`, `skills`, `certifications`) — applicants fill in a structured resume questionnaire instead of uploading a document, so the future NLP resume-analysis stage gets clean data instead of having to parse a scanned/blurry PDF.
 
+Then repeat once more with `supabase/migrations/0004_criteria.sql`. This adds the `criteria` table (HR-defined keyword/weight pairs per job posting) and its RLS policies, editable from the "Screening Criteria" section of the job posting form.
+
+Then repeat once more with `supabase/migrations/0005_resume_evaluations.sql`. This adds the `resume_evaluations` table, which caches each applicant's AI-generated match score, explanation, and per-criterion reasoning so the Applicants view doesn't re-call the AI on every visit.
+
+Then repeat once more with `supabase/migrations/0006_interview.sql`. This adds the video-interview tables (`interview_questions`, `interview_responses`, `interview_evaluations`) and a private `interview-videos` Storage bucket with its own access policies.
+
+Then repeat once more with `supabase/migrations/0007_application_status.sql`. This constrains `applications.status` to `submitted`/`advanced`/`declined` and adds the RLS policy letting HR actually update it — the candidate advance/decline decision on the HR Personnel dashboard.
+
+Then repeat once more with `supabase/migrations/0008_application_extra_fields.sql`. This adds driver's-license type/restriction codes, years of driving experience, NBI/police clearance, and shifting-schedule willingness to `applications` — structured facts (shown only for the relevant job categories on the apply form) that give the AI resume evaluator concrete signals instead of relying entirely on free-text prose.
+
+Then repeat once more with `supabase/migrations/0009_application_profile_fields.sql`. This adds a structured highest-educational-attainment level, the applicant's current location, and a medical/physical fitness certificate flag to `applications` — closing the remaining gaps between what the apply form collects and what the AI evaluator and HR reviewers actually need to screen accurately.
+
 Run any later `NNNN_*.sql` files the same way, in order — they're all safe to re-run (`create table if not exists` / `drop policy if exists`).
 
 ## 4. Bootstrap the first HR head account
@@ -61,10 +73,50 @@ The HR head's **Manage HR Personnel** screen creates new HR accounts through a S
 
 That's it — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are automatically available inside every edge function, so no extra secrets need to be set. Once deployed, the HR head's "Add HR Personnel" form on the **Manage HR Personnel** screen will work end-to-end.
 
+## 6. Deploy the "suggest criteria" edge function (AI-assisted screening criteria)
+
+The "✨ Suggest with AI" button on the job posting form's Screening Criteria section calls Google's Gemini API (via `supabase/functions/suggest-criteria`) to draft keyword/weight suggestions from the job title, description, and qualifications — HR then edits or removes suggestions before saving. This function needs a Gemini API key, which — unlike `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` — is **not** provided automatically and must be set as a function secret:
+
+```
+supabase secrets set GEMINI_API_KEY=your-gemini-api-key
+supabase functions deploy suggest-criteria
+```
+
+Get a free API key from [Google AI Studio](https://aistudio.google.com/apikey) — no credit card required for the free tier. The key is only ever read inside this edge function — it's never sent to or stored in the browser.
+
+## 7. Deploy the "evaluate application" edge function (AI resume matching)
+
+The Applicants view calls Gemini (via `supabase/functions/evaluate-application`) to score each applicant against the job's screening criteria and description, matching on meaning rather than exact keywords (e.g. "followed all traffic regulations" satisfies a "Safe Driving" criterion), and writes an explanation plus per-criterion reasoning to the `resume_evaluations` table. It reads the same `GEMINI_API_KEY` secret as `suggest-criteria` — if you already set it in step 6, you only need to deploy the function:
+
+```
+supabase functions deploy evaluate-application
+```
+
+If you haven't set the secret yet, run `supabase secrets set GEMINI_API_KEY=your-gemini-api-key` first (see step 6). Every applicant without a saved evaluation is scored automatically, one at a time, the moment HR opens a job's Applicants list.
+
+## 8. Deploy the video interview edge functions
+
+The video interview module uses three more edge functions, all reading the same `GEMINI_API_KEY` secret as above — if it's already set, just deploy:
+
+```
+supabase functions deploy suggest-interview-questions
+supabase functions deploy evaluate-interview-response
+supabase functions deploy translate-question
+```
+
+- `suggest-interview-questions` powers the "✨ Suggest with AI" button on the HR **Interview Questions** screen (draft questions for a category — HR reviews and adds the ones they want to the bank).
+- `evaluate-interview-response` sends a recorded answer's video directly to Gemini (it accepts video natively — no separate speech-to-text step) and gets back a transcript, sentiment tone, relevance to the question, an overall score, and an explanation, written to `interview_evaluations`. This runs automatically, one answer at a time, when HR opens a job's Applicants list, same as resume evaluation.
+- `translate-question` powers the "🌐 Translate to Taglish" button an applicant sees on each interview question, once revealed — any signed-in user may call it (not HR-only), and nothing is persisted, it's translated on demand each time.
+
 ## Where the schema lives
 
 - `supabase/migrations/0001_init.sql` — tables, trigger, RLS policies (source of truth for the DB schema).
 - `supabase/functions/create-hr-account/` — edge function used by the HR head's "Manage HR Personnel" screen to create new HR accounts.
+- `supabase/functions/suggest-criteria/` — edge function used by the "✨ Suggest with AI" button on the job posting form to draft screening criteria.
+- `supabase/functions/evaluate-application/` — edge function used by the Applicants view to score each applicant against the job's criteria and cache the result in `resume_evaluations`.
+- `supabase/functions/suggest-interview-questions/` — edge function used by the HR Interview Questions screen to draft category-scoped interview questions.
+- `supabase/functions/evaluate-interview-response/` — edge function used by the Applicants view to transcribe and score one recorded video answer, caching the result in `interview_evaluations`.
+- `supabase/functions/translate-question/` — edge function used by the applicant's Interview screen to translate a question into Taglish on demand.
 
 ## Mapping to the thesis ERD (Figure 13)
 
@@ -75,5 +127,10 @@ The live schema uses different table/column names than Figure 13 in the capstone
 | `users_tbl` (incl. `password`) | `profiles` + Supabase's built-in `auth.users` | Supabase Auth stores/hashes credentials in `auth.users`; `profiles` only holds app-level fields (role, full_name, is_active). |
 | `session_tbl` | *(not needed)* | Supabase Auth issues and manages JWT sessions itself. |
 | `job_tbl` (`qualifications`, `requirements`) | `job_postings` (`required_qualifications`, `preferred_qualifications`, plus `accommodations_policy`, `ai_policy`, `status`, `application_deadline`) | Split into required/preferred per what the AI screening phase will read, and expanded with the applicant-facing policy fields. |
-| `criteria_tbl` (keyword/weight per job) | *(not yet built)* | Deferred to the resume-analysis phase — will be added when the NLP scoring logic that consumes it is built. |
-| `application_tbl`, `resume_tbl`, `interview_tbl`, `interview_questions_tbl`, `results_tbl`, `reports_tbl` | *(not yet built)* | Later phases (resume upload, video interview, AI scoring, HR reporting) — not in scope for Phase 1 (accounts + job postings). |
+| `criteria_tbl` (keyword/weight per job) | `criteria` | Editable from the "Screening Criteria" section of the job posting form; consumed by the AI resume-evaluation stage. |
+| `application_tbl` | `applications` | Structured fields (`work_experience`, `education`, `skills`, `certifications`) instead of a single `form_data` blob — see `0003_structured_resume.sql`. |
+| `resume_tbl` (`file_path`, `parsed_data`) | *(not built — superseded)* | The paper's design uploads a resume file and parses it; this system skips that step entirely by having applicants fill structured fields directly (Phase 2 decision), so there's no file to store or parse. |
+| `results_tbl` (`resume_score`, `interview_score`, `total_score`, `ranking`) | `resume_evaluations` + `interview_evaluations`, combined live | The paper models one bare row per applicant with both scores plus a ranking. Rather than a stored `results` table, `src/lib/reports.js` computes `total_score` (mean of the two) and `ranking` on read, from the two richer evaluation tables — same approach HrApplicants.jsx already used for its per-job ranked list, now shared across the per-job Applicants view, the HR Personnel decision queue, and the HR Head "Candidate Ranking" report. |
+| `interview_questions_tbl` (`job_id` FK) | `interview_questions` (`category`, no `job_id`) | The paper scopes questions to one job; the live schema scopes them to a job *category* instead, so HR authors a question bank once per category (e.g. "Driver") and every job posting sharing that category reuses it, rather than re-entering the same questions per job posting. |
+| `interview_tbl` (`video_path`, `transcript`, `response_data`, `evaluation_score`, one row per application) | `interview_responses` (applicant-writable: `video_path`) + `interview_evaluations` (AI-written: `transcript`, `sentiment_label`/`score`, `relevance_score`, `evaluation_score`) — one row per (application, question) | Split into two tables for the same reason `criteria`/`resume_evaluations` are split: applicants can only ever write their own raw video, never the AI's score. Also more granular than Figure 13 — one row per question (3 per application) instead of one combined row, so each answer's transcript/sentiment/relevance is visible individually, not just an aggregate. |
+| `reports_tbl` | *(not built — computed, not stored)* | HR Head's dashboard (`src/pages/HrHeadDashboard.jsx` + `src/lib/reports.js`) is the paper's "HR Reporting Dashboard" — recruitment funnel, per-job pipelines, candidate ranking, sentiment breakdown, HR personnel activity. It's generated fresh from the live tables on every load rather than persisted rows in a `reports` table, so there's nothing to go stale or reconcile. |

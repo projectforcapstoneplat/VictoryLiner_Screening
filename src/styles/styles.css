@@ -7,12 +7,263 @@
   box-sizing: border-box;
 }
 
+:root {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Fills in a smooth fade for elements that don't already declare their own
+   transition inline (inline styles always win, so this never fights the
+   curated hover/reveal/btn-animate transitions defined elsewhere). */
+*, *::before, *::after {
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
 body {
   margin: 0;
   font-family: var(--font-ui);
   color: var(--text-primary);
+  background: var(--surface-page);
 }
 
 a {
   cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------
+   Motion — shared keyframes + utility classes used across pages so
+   entrances/hovers feel consistent instead of each page inventing its own.
+   ------------------------------------------------------------------- */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulseScale {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes heroZoom {
+  from { transform: scale(1) translate(0, 0); }
+  to { transform: scale(1.1) translate(-1.5%, -1%); }
+}
+
+.hero-zoom {
+  animation: heroZoom 18s ease-out infinite alternate;
+}
+
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.float-badge {
+  animation: floatY 3.2s ease-in-out infinite;
+}
+
+@keyframes bounceChevron {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(8px); opacity: 1; }
+}
+.scroll-chevron {
+  animation: bounceChevron 1.8s ease-in-out infinite;
+}
+
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-track {
+  animation: marqueeScroll 28s linear infinite;
+}
+.marquee-row:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes blobDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(3%, -4%) scale(1.06); }
+}
+.bg-blob {
+  animation: blobDrift 14s ease-in-out infinite;
+}
+
+@keyframes stepperBusBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes stepperWheelSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes stepperDotPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.35); }
+}
+
+@keyframes chipPopIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes smokePuff {
+  0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
+  20% { opacity: 0.5; }
+  100% { transform: translate(-16px, -12px) scale(1.7); opacity: 0; }
+}
+
+/* Stepper's driving bus (see src/components/navigation/Stepper) — position is
+   animated inline via `left`; these add the idle "engine running" motion so
+   it reads as alive even while parked at the current step. */
+.stepper-bus {
+  animation: stepperBusBounce 1.6s ease-in-out infinite;
+}
+.stepper-wheel {
+  animation: stepperWheelSpin 1.4s linear infinite;
+}
+.stepper-dot-current {
+  animation: stepperDotPulse 1.8s ease-in-out infinite;
+}
+
+/* Bus headlight — off in light mode, switches on with a warm glow in dark
+   mode (see BusIcon in Stepper.jsx) so the bus reads as "driving at night". */
+.stepper-headlight {
+  transition: fill 0.3s ease, filter 0.3s ease;
+}
+:root[data-theme="dark"] .stepper-headlight {
+  fill: #fff8d6;
+  filter:
+    drop-shadow(0 0 2px #fffdf2)
+    drop-shadow(0 0 6px #ffe680)
+    drop-shadow(0 0 14px rgba(255, 214, 89, 0.95));
+}
+
+/* Headlight beams — invisible (transparent stroke) in light mode, switch on
+   alongside the headlight itself in dark mode. */
+.stepper-headlight-beam {
+  stroke: transparent;
+  opacity: 0;
+  transition: stroke 0.3s ease, opacity 0.3s ease;
+}
+:root[data-theme="dark"] .stepper-headlight-beam {
+  stroke: #fff6cf;
+  opacity: 0.85;
+  filter: drop-shadow(0 0 3px rgba(255, 246, 207, 0.8));
+}
+
+/* Exhaust smoke — invisible and static in light mode; only drifts/fades in
+   dark mode (see the three .stepper-smoke circles in Stepper.jsx). */
+.stepper-smoke {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+:root[data-theme="dark"] .stepper-smoke {
+  animation: smokePuff 2.2s ease-out infinite;
+}
+
+.chip-pop {
+  animation: chipPopIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Scroll-triggered reveal (see src/components/motion/Reveal) — starts hidden,
+   Reveal flips on the .reveal-visible class once the element enters the viewport. */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hover-lift {
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.14);
+}
+
+.btn-animate {
+  transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-animate:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+}
+.btn-animate:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.social-icon {
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+.social-icon:hover {
+  background: var(--action-primary-bg) !important;
+  color: var(--off-white-300) !important;
+  transform: translateY(-3px) scale(1.06);
+}
+
+.hover-lift:hover .job-icon-badge {
+  transform: scale(1.14);
+}
+
+/* "How It Works" connector — drawn left-to-right once the step row scrolls
+   into view; top offset matches the step-number circle's vertical center. */
+.process-connector {
+  position: absolute;
+  top: 54px;
+  left: calc(100% / 6);
+  right: calc(100% / 6);
+  height: 2px;
+  background: repeating-linear-gradient(to right, var(--action-primary-bg) 0 10px, transparent 10px 18px);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 1s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.process-connector-visible {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom {
+    animation: none !important;
+    transition: none !important;
+  }
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .process-connector {
+    transform: scaleX(1) !important;
+    transition: none !important;
+  }
+  .job-icon-badge {
+    transition: none !important;
+  }
+  .stepper-bus, .stepper-wheel, .stepper-dot-current, .chip-pop, .stepper-smoke {
+    animation: none !important;
+  }
+  .float-badge, .scroll-chevron, .marquee-track, .bg-blob {
+    animation: none !important;
+  }
 }

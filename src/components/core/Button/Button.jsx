@@ -1,6 +1,6 @@
 // figma reference: Apply / Sign In / Next / Prev pill buttons across Job-details, application, homepage
 import React from 'react';
-export function Button({ children, variant = 'primary', size = 'md', href, onClick, type = 'button', style, ...rest }) {
+export function Button({ children, variant = 'primary', size = 'md', href, onClick, type = 'button', style, className, ...rest }) {
   const sizes = {
     sm: { padding: '11px 17px', fontSize: 'var(--text-base)', minWidth: 100, height: 45 },
     md: { padding: '18px 29px', fontSize: 'var(--text-base)', minWidth: 121, height: 65.5 },
@@ -13,7 +13,7 @@ export function Button({ children, variant = 'primary', size = 'md', href, onCli
   };
   const Tag = href ? 'a' : 'button';
   return (
-    <Tag href={href} type={href ? undefined : type} onClick={onClick} style={{
+    <Tag href={href} type={href ? undefined : type} onClick={onClick} className={['btn-animate', className].filter(Boolean).join(' ')} style={{
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
       borderRadius: 'var(--radius-pill)', border: 'none', cursor: 'pointer',
       fontFamily: 'var(--font-ui)', fontWeight: variant === 'strong' ? 700 : 200,

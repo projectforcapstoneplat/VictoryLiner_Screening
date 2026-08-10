@@ -26,6 +26,15 @@
 --off-white-200:rgb(255,254,254);
 --off-white-300:rgb(255,253,253);
 --link-blue:rgb(0,0,255);
+/* dark-theme neutrals */
+--dark-000:rgb(15,17,20);
+--dark-050:rgb(21,24,28);
+--dark-100:rgb(29,32,37);
+--dark-150:rgb(38,42,48);
+--dark-border:rgba(255,255,255,0.14);
+--dark-border-strong:rgba(255,255,255,0.26);
+--dark-text:rgb(237,238,240);
+--dark-text-muted:rgba(237,238,240,0.6);
 
 /* semantic aliases */
 --surface-page:var(--white);
@@ -35,6 +44,8 @@
 --surface-search:var(--pink-100);
 --surface-footer:var(--navy-900);
 --surface-accent-pill:var(--pink-300);
+--surface-glass:rgba(255,255,255,0.85);
+--surface-blob:var(--pink-100);
 
 --text-primary:var(--ink-000);
 --text-onfooter:var(--white);
@@ -51,4 +62,30 @@
 --border-card:var(--gray-600);
 --border-field:rgba(0,0,0,0.4);
 --border-search:rgba(107,92,92,0.63);
+}
+
+/* Dark theme — overrides only the semantic aliases above (raw brand/footer
+   colors like red, navy, and pink accents stay the same in both themes so
+   buttons/badges/footer keep reading as "Victory Liner" regardless). Applied
+   by ThemeProvider (src/lib/ThemeContext.jsx) via data-theme on <html>. */
+:root[data-theme="dark"] {
+  --surface-page:var(--dark-000);
+  --surface-page-alt:var(--dark-050);
+  --surface-card:var(--dark-100);
+  --surface-field:var(--dark-150);
+  --surface-search:var(--dark-150);
+  --surface-glass:rgba(29,32,37,0.75);
+  /* pink-100 is a near-white light-mode tint — glaring and hard-edged against
+     a dark page background, since the blob's overflow:hidden wrapper clips
+     it sharply. A dim red glow reads as a subtle accent on dark instead. */
+  --surface-blob:rgba(185,50,50,0.16);
+
+  --text-primary:var(--dark-text);
+  --text-placeholder:var(--dark-text-muted);
+  --text-link:rgb(130,158,255);
+
+  --border-hairline:var(--dark-border);
+  --border-card:var(--dark-border-strong);
+  --border-field:var(--dark-border-strong);
+  --border-search:var(--dark-border-strong);
 }

@@ -1,12 +1,23 @@
-// HR sign-in — separate, unlisted entry point. HR accounts are never self-registered
-// (see supabase/README.md); only an HR head can create them from the HR dashboard.
+// HR sign-in — separate, unlisted entry point (reachable via ?hr=1, no public
+// link to it). HR accounts are never self-registered (see supabase/README.md);
+// only an HR head can create them from the HR dashboard.
+// Deliberately its own distraction-free "portal" shell rather than the public
+// marketing Header/Footer — no nav links, no footer address/social icons,
+// nothing that belongs on a staff-only sign-in screen.
 import { useState } from 'react';
-import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
+import { ThemeToggle } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { signInWithPassword, signOut, getProfile } from '../lib/auth.js';
-import logo from '../assets/logo.png';
+
+function LockIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary-bg)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
 
 export function HrLogin({ nav }) {
   const [email, setEmail] = useState('');
@@ -38,24 +49,60 @@ export function HrLogin({ nav }) {
     nav('hr-dashboard');
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !loading) handleSignIn();
+  };
+
   return (
-    <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header logo={logo} links={[]} /></div>
-      <section style={{ maxWidth: 900, margin: '80px auto 0', padding: '0 20px' }}>
-        <div style={{ background: 'var(--off-white-100)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
-          <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 20px' }}>HR Sign In</h2>
-          <div style={{ width: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>
-            <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Input label="Password:" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
-            <Button variant="strong" size="lg" onClick={handleSignIn} disabled={loading}>{loading ? 'Signing In…' : 'Sign In'}</Button>
-            <div onClick={() => nav('home')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', textAlign: 'center' }}>
-              &larr; Back to Careers Site
+    <div style={{ minHeight: '100vh', background: 'var(--surface-page-alt)', fontFamily: 'var(--font-ui)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: 3, background: 'var(--action-primary-bg)', flexShrink: 0 }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '28px 40px' }}>
+        <div onClick={() => nav('home')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: 'var(--font-display)' }}>
+          <span style={{ fontWeight: 800, fontSize: 'var(--text-lg)', color: 'var(--action-primary-bg)' }}>Victory Liner</span>
+          <span style={{ fontWeight: 600, fontSize: 'var(--text-xs)', letterSpacing: 3, textTransform: 'uppercase', color: 'var(--text-primary)', opacity: 0.55 }}>Careers</span>
+        </div>
+        <ThemeToggle />
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+        <div style={{
+          width: '100%', maxWidth: 400, background: 'var(--surface-card)', borderRadius: 20,
+          boxShadow: 'var(--shadow-card)', padding: '44px 40px', display: 'flex', flexDirection: 'column', gap: 24,
+          boxSizing: 'border-box',
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LockIcon />
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <h1 style={{ margin: 0, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-xl)' }}>HR Portal</h1>
+              <p style={{ margin: '6px 0 0', fontSize: 'var(--text-sm)', opacity: 0.65 }}>Sign in with your staff account to continue.</p>
             </div>
           </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} onKeyDown={handleKeyDown}>
+            <Input label="Email Address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+            <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            {error && (
+              <div style={{ background: 'var(--pink-100)', color: 'var(--red-700)', fontSize: 'var(--text-sm)', padding: '10px 14px', borderRadius: 10 }}>
+                {error}
+              </div>
+            )}
+            <Button variant="strong" size="lg" onClick={handleSignIn} disabled={loading}>{loading ? 'Signing In…' : 'Sign In'}</Button>
+          </div>
+
+          <button
+            onClick={() => nav('home')}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              color: 'var(--text-primary)', opacity: 0.55, fontSize: 'var(--text-xs)', fontFamily: 'inherit',
+            }}
+          >
+            &larr; Back to Careers Site
+          </button>
         </div>
-      </section>
-      <div style={{ marginTop: 60 }}><Footer logo={logo} /></div>
+      </div>
     </div>
   );
 }
