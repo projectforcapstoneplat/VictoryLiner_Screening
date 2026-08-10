@@ -7,7 +7,6 @@ import { Input } from '../components/core/Input/Input.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { signUpApplicant } from '../lib/auth.js';
 import { getPasswordChecklist, isPasswordValid } from '../lib/passwordRules.js';
-import logo from '../assets/logo.png';
 
 function RequirementRow({ passed, label }) {
   return (
@@ -63,7 +62,7 @@ export function CreateAccount({ job, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header logo={logo} /></div>
+      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
         <div onClick={() => nav('signin', j)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Sign In</div>
         <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, marginBottom: 30 }}>{j.title}</div>
@@ -99,7 +98,7 @@ export function CreateAccount({ job, nav }) {
           )}
         </div>
       </section>
-      <div style={{ marginTop: 60 }}><Footer logo={logo} /></div>
+      <div style={{ marginTop: 60 }}><Footer nav={nav} /></div>
     </div>
   );
 }

@@ -6,9 +6,8 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { signInWithPassword } from '../lib/auth.js';
-import logo from '../assets/logo.png';
 
-export function SignIn({ job, nav }) {
+export function SignIn({ job, nav, redirectTo }) {
   const j = job || { title: 'Bus Conductor' };
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,17 +27,17 @@ export function SignIn({ job, nav }) {
       nav('apply', job);
       return;
     }
-    nav('home');
+    nav(redirectTo || 'home');
   };
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header logo={logo} /></div>
+      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
         <div onClick={() => nav('details', j)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Job Posting</div>
         <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, marginBottom: 30 }}>{j.title}</div>
         <div style={{ marginBottom: 50, padding: '0 40px' }}><Stepper current={0} /></div>
-        <div style={{ background: 'var(--off-white-100)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+        <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
           <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 20px' }}>Sign In</h2>
           <div style={{ width: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>
             <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -52,7 +51,7 @@ export function SignIn({ job, nav }) {
           </div>
         </div>
       </section>
-      <div style={{ marginTop: 60 }}><Footer logo={logo} /></div>
+      <div style={{ marginTop: 60 }}><Footer nav={nav} /></div>
     </div>
   );
 }
