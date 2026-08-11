@@ -54,7 +54,7 @@ function SectionCard({ title, subtitle, action, children, style }) {
   );
 }
 
-function ScreeningQueue({ queue, onDecide }) {
+function ScreeningQueue({ queue, onDecide, profile }) {
   const [answerIndex, setAnswerIndex] = useState(0);
   const [videoUrl, setVideoUrl] = useState(null);
   const [deciding, setDeciding] = useState(false);
@@ -85,8 +85,11 @@ function ScreeningQueue({ queue, onDecide }) {
 
   const handleDecide = async (status) => {
     setDeciding(true);
-    await updateApplicationStatus(candidate.applicationId, status);
+    const { error } = await updateApplicationStatus(candidate.applicationId, status, profile?.id);
     setDeciding(false);
+    if (error?.code === 'ALREADY_DECIDED') {
+      window.alert(`${error.message}\n\nRemoving this applicant from your queue.`);
+    }
     onDecide(candidate.applicationId);
   };
 
@@ -250,7 +253,7 @@ export function HrPersonnelDashboard({ nav, profile }) {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
-              <ScreeningQueue queue={report.queue} onDecide={handleDecide} />
+              <ScreeningQueue queue={report.queue} onDecide={handleDecide} profile={profile} />
               <SectionCard title="Live Pipeline Stages" subtitle="Top job postings by applicant volume">
                 {report.jobBreakdown.length === 0 ? (
                   <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications yet.</p>

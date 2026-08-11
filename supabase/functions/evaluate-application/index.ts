@@ -5,13 +5,18 @@
 // browser. Result is written to resume_evaluations so the Applicants view
 // only has to call this once per applicant, not on every page load.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
 
+// Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
+// your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
+// once you have one, to stop other sites' browsers from being able to call this.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const GEMINI_MODEL = 'gemini-3.6-flash';
+// Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 // Gemini's schema format uses uppercase type names (its own Type enum, not
 // standard lowercase JSON Schema).
@@ -80,6 +85,13 @@ Deno.serve(async (req) => {
 
     if (!callerProfile || !['hr_personnel', 'hr_head'].includes(callerProfile.role)) {
       return json({ error: 'Only HR can request applicant evaluations.' }, 403);
+    }
+
+    // Generous limit — this fires automatically once per un-evaluated
+    // applicant when HR opens a job's Applicants list, so a job with many
+    // applicants can legitimately trigger a burst of calls at once.
+    if (await checkRateLimit(callerClient, user.id, 'evaluate-application', 60, 10)) {
+      return json({ error: 'Too many requests — please wait a few minutes and try again.' }, 429);
     }
 
     const { applicationId } = await req.json();

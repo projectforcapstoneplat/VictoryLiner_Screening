@@ -22,7 +22,7 @@ function linkTarget(key, nav) {
 
 export function Footer({ links = DEFAULT_LINKS, nav }) {
   return (
-    <footer style={{ background: 'var(--surface-footer)', padding: '52px 124px', boxSizing: 'border-box', fontFamily: 'var(--font-display)', color: 'var(--text-onfooter)' }}>
+    <footer className="app-footer" style={{ background: 'var(--surface-footer)', padding: '52px 124px', boxSizing: 'border-box', fontFamily: 'var(--font-display)', color: 'var(--text-onfooter)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 40, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>

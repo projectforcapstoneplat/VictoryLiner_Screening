@@ -83,7 +83,7 @@ export function FAQ({ nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 820, margin: '70px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up" style={{ textAlign: 'center', marginBottom: 44 }}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>

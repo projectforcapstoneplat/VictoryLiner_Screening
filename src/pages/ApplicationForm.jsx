@@ -342,7 +342,7 @@ export function ApplicationForm({ job, profile, nav }) {
   if (checking) {
     return (
       <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-        <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
         <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}><p>Loading…</p></section>
       </div>
     );
@@ -350,7 +350,7 @@ export function ApplicationForm({ job, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
         <FadeSection delay={0}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 6 }}>Applying For</div>

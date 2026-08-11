@@ -82,8 +82,32 @@ export async function getInterviewCompletionMap(applicationIds) {
   return { data: map };
 }
 
+// Persists the recording-attempt count for one question — called each time
+// the applicant starts a new take (not just on submit), so the limit can't
+// be reset just by refreshing the page (see MAX_ATTEMPTS in Interview.jsx).
+// Best-effort: a failed update never blocks the applicant from recording,
+// it just means the count may under-report if they're offline right then.
+export async function recordAttempt(applicationId, questionId, attemptCount) {
+  const { error } = await supabase
+    .from('interview_responses')
+    .update({ attempt_count: attemptCount })
+    .eq('application_id', applicationId)
+    .eq('question_id', questionId);
+  return { error };
+}
+
+// A 1-minute webm recording at a normal bitrate is nowhere near this — it's
+// a sanity ceiling against a tampered client, not a real-world limit. The
+// interview-videos bucket also enforces this server-side (see migration
+// 0011_storage_limits.sql), so this check is a faster/friendlier first line,
+// not the only line.
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 // Uploads a recorded/re-recorded answer and marks that response submitted.
 export async function uploadResponseVideo({ applicantId, applicationId, questionId, blob }) {
+  if (blob.size > MAX_UPLOAD_BYTES) {
+    return { error: { message: 'This recording is too large to upload. Please re-record a shorter answer.' } };
+  }
   const path = `${applicantId}/${applicationId}/${questionId}.webm`;
   const { error: uploadError } = await supabase.storage
     .from('interview-videos')

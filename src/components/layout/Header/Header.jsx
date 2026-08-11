@@ -44,21 +44,26 @@ export function Header({ links, onLogoClick, compact = false, nav, accessory }) 
     { label: 'About Us', onClick: nav ? () => nav('home', null, { scrollTo: 'about' }) : undefined },
   ];
   return (
-    <header style={{
+    <header className="app-header" style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24,
       height: compact ? 66 : 86, padding: compact ? '0 32px' : '0 40px', borderRadius: 'var(--radius-md)',
       background: 'var(--surface-glass)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
       boxShadow: compact ? '0 8px 20px rgba(0,0,0,0.12)' : 'var(--shadow-glass-header)', boxSizing: 'border-box',
       transition: 'height 0.25s ease, padding 0.25s ease, box-shadow 0.25s ease, background 0.25s ease',
     }}>
-      <div
+      <button
+        type="button"
         onClick={onLogoClick || (() => { window.location.href = '/'; })}
-        style={{ cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: 'var(--font-display)' }}
+        aria-label="Victory Liner Careers — go to homepage"
+        style={{
+          cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: 'var(--font-display)',
+          border: 'none', background: 'transparent', padding: 0, font: 'inherit',
+        }}
       >
         <span style={{ fontWeight: 800, fontSize: 'var(--text-xl)', color: 'var(--action-primary-bg)' }}>Victory Liner</span>
         <span style={{ fontWeight: 600, fontSize: 'var(--text-xs)', letterSpacing: 3, textTransform: 'uppercase', color: 'var(--text-primary)' }}>Careers</span>
-      </div>
-      <nav style={{ display: 'flex', alignItems: 'center', gap: 36, fontFamily: 'var(--font-ui)', fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
+      </button>
+      <nav className="app-header-nav" style={{ display: 'flex', alignItems: 'center', gap: 36, fontFamily: 'var(--font-ui)', fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
         {resolvedLinks.map((l) => {
           const label = typeof l === 'string' ? l : l.label;
           const onClick = typeof l === 'string' ? undefined : l.onClick;

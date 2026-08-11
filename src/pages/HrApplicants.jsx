@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
-import { listApplicationsForJob, updateApplicationStatus } from '../lib/applications.js';
+import { listApplicationsForJob, updateApplicationStatus, listDecisionLogForApplications } from '../lib/applications.js';
 import { computeYearsOfExperience } from '../lib/experience.js';
 import { listEvaluationsForJob, evaluateApplication } from '../lib/resumeEvaluation.js';
 import {
@@ -11,6 +11,7 @@ import {
   evaluateResponse,
   getSignedVideoUrl,
 } from '../lib/interviewEvaluation.js';
+import { buildCsv, downloadCsv } from '../lib/csvExport.js';
 
 const DECISION_META = {
   submitted: { label: 'Awaiting Review', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' },
@@ -248,6 +249,7 @@ export function HrApplicants({ job, nav, profile }) {
   const [interviewEvaluations, setInterviewEvaluations] = useState({}); // responseId -> evaluation
   const [interviewEvalStatus, setInterviewEvalStatus] = useState({}); // responseId -> 'evaluating' | 'error'
   const [interviewEvalErrors, setInterviewEvalErrors] = useState({});
+  const [decisionLog, setDecisionLog] = useState({}); // applicationId -> most recent decision log entry
 
   useEffect(() => {
     if (!job?.id) return;
@@ -262,9 +264,10 @@ export function HrApplicants({ job, nav, profile }) {
       setEvaluations(map);
 
       const appIds = appsResult.data.map((a) => a.id);
-      const [responsesResult, interviewEvalResult] = await Promise.all([
+      const [responsesResult, interviewEvalResult, decisionLogResult] = await Promise.all([
         listResponsesForApplications(appIds),
         listEvaluationsForApplications(appIds),
+        listDecisionLogForApplications(appIds),
       ]);
       if (cancelled) return;
       const byApplication = {};
@@ -275,6 +278,14 @@ export function HrApplicants({ job, nav, profile }) {
       const interviewEvalMap = {};
       for (const e of interviewEvalResult.data) interviewEvalMap[e.response_id] = e;
       setInterviewEvaluations(interviewEvalMap);
+
+      // Rows are already ordered most-recent-first, so the first one seen
+      // per application is the current decision's log entry.
+      const decisionMap = {};
+      for (const d of decisionLogResult.data) {
+        if (!decisionMap[d.application_id]) decisionMap[d.application_id] = d;
+      }
+      setDecisionLog(decisionMap);
 
       setLoading(false);
     })();
@@ -373,10 +384,47 @@ export function HrApplicants({ job, nav, profile }) {
     }
   }
 
+  function handleExportCsv() {
+    const headers = [
+      'Full Name', 'Email', 'Phone', 'Current Location', 'Applied On', 'Decision',
+      'Resume Match %', 'Interview Match %', 'Skills', 'Education Level',
+      "Driver's License Type", 'Years Driving Experience', 'NBI Clearance', 'Willing Shifting Schedule', 'Medical Certificate',
+    ];
+    const rows = ranked.map(({ application: a, evaluation, interviewScore }) => [
+      a.full_name,
+      a.email,
+      a.phone || '',
+      a.current_location || '',
+      new Date(a.created_at).toLocaleDateString(),
+      DECISION_META[a.status]?.label || 'Awaiting Review',
+      evaluation?.score ?? '',
+      interviewScore ?? '',
+      (a.skills || []).join('; '),
+      a.education_level || '',
+      a.drivers_license_type || '',
+      a.years_driving_experience ?? '',
+      a.has_nbi_clearance == null ? '' : a.has_nbi_clearance ? 'Yes' : 'No',
+      a.willing_shifting_schedule == null ? '' : a.willing_shifting_schedule ? 'Yes' : 'No',
+      a.has_medical_certificate == null ? '' : a.has_medical_certificate ? 'Yes' : 'No',
+    ]);
+    const safeJobTitle = job.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    downloadCsv(`applicants-${safeJobTitle}-${new Date().toISOString().slice(0, 10)}.csv`, buildCsv(headers, rows));
+  }
+
   async function handleDecide(applicationId, status) {
     setDecidingId(applicationId);
-    await updateApplicationStatus(applicationId, status);
+    const { data, error } = await updateApplicationStatus(applicationId, status, profile.id);
+    if (error?.code === 'ALREADY_DECIDED') {
+      window.alert(`${error.message}\n\nThis list will refresh to show the current status.`);
+      setApplications((apps) => apps.map((a) => (a.id === applicationId ? { ...a, status: data?.status || a.status } : a)));
+      setDecidingId(null);
+      return;
+    }
     setApplications((apps) => apps.map((a) => (a.id === applicationId ? { ...a, status } : a)));
+    setDecisionLog((log) => ({
+      ...log,
+      [applicationId]: { status, decided_at: new Date().toISOString(), profiles: { full_name: profile.full_name, email: profile.email } },
+    }));
     setDecidingId(null);
   }
 
@@ -430,11 +478,18 @@ export function HrApplicants({ job, nav, profile }) {
   return (
     <HrShell active="hr-jobs" nav={nav} profile={profile}>
       <div onClick={() => nav('hr-jobs')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', marginBottom: 20 }}>&larr; Back to Job Openings</div>
-      <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 8px', fontFamily: 'var(--font-display)' }}>Applicants — {job.title}</h1>
-      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginBottom: 22 }}>
-        {applications.length} application{applications.length === 1 ? '' : 's'}
-        {applications.length > 0 && ' · ranked by AI resume match against screening criteria'}
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 8px', fontFamily: 'var(--font-display)' }}>Applicants — {job.title}</h1>
+          <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginBottom: 22 }}>
+            {applications.length} application{applications.length === 1 ? '' : 's'}
+            {applications.length > 0 && ' · ranked by AI resume match against screening criteria'}
+          </p>
+        </div>
+        {applications.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={handleExportCsv}>Export CSV</Button>
+        )}
+      </div>
       {loading ? (
         <p>Loading applicants…</p>
       ) : applications.length === 0 ? (
@@ -456,9 +511,16 @@ export function HrApplicants({ job, nav, profile }) {
                       <div style={{ fontSize: 'var(--text-sm)', opacity: 0.8 }}>{a.email} {a.phone ? `· ${a.phone}` : ''} {a.current_location ? `· ${a.current_location}` : ''}</div>
                       <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 4 }}>Applied {new Date(a.created_at).toLocaleDateString()}</div>
                     </div>
-                    <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: decision.bg, color: decision.fg, whiteSpace: 'nowrap' }}>
-                      {decision.label}
-                    </span>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: decision.bg, color: decision.fg, whiteSpace: 'nowrap' }}>
+                        {decision.label}
+                      </span>
+                      {decisionLog[a.id] && (
+                        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55, marginTop: 4 }}>
+                          by {decisionLog[a.id].profiles?.full_name || decisionLog[a.id].profiles?.email || 'HR'} on {new Date(decisionLog[a.id].decided_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {a.skills?.length > 0 && (
                     <div style={{ fontSize: 'var(--text-sm)', marginTop: 12 }}><strong>Skills:</strong> {a.skills.join(', ')}</div>

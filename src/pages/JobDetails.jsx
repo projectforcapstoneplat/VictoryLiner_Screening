@@ -59,7 +59,7 @@ export function JobDetails({ job, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
 
       {/* Hero band — gives the page a real visual anchor instead of jumping straight into plain text on a bare background. */}
       <div className="fade-in-up" style={{ marginTop: 40, background: 'linear-gradient(120deg, var(--action-primary-bg), var(--red-700))', padding: '56px 20px' }}>

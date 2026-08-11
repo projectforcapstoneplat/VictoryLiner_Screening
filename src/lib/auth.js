@@ -27,3 +27,21 @@ export async function getProfile(userId) {
     .single();
   return { data, error };
 }
+
+// Sends a password-reset email. Supabase redirects the link back to
+// `redirectTo` with a recovery session already active — App.jsx listens for
+// the PASSWORD_RECOVERY auth event and routes to the "set new password"
+// screen automatically, so no token handling happens in app code.
+export async function requestPasswordReset(email) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+  });
+  return { error };
+}
+
+// Only valid while the recovery session from the reset-link click is
+// active (see App.jsx) — Supabase Auth itself enforces that, not this code.
+export async function updatePassword(newPassword) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  return { error };
+}

@@ -62,20 +62,20 @@ export function CreateAccount({ job, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
         <div onClick={() => nav('signin', j)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Sign In</div>
         <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, marginBottom: 30 }}>{j.title}</div>
         <div style={{ marginBottom: 50, padding: '0 40px' }}><Stepper current={0} /></div>
-        <div style={{ background: 'var(--off-white-100)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+        <div style={{ background: 'var(--off-white-100)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }} className="auth-card">
           <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 20px' }}>Create An Account</h2>
           {confirmationSent ? (
-            <div style={{ width: 525, display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'center' }}>
+            <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'center' }}>
               <p style={{ fontSize: 'var(--text-sm)' }}>We sent a confirmation link to <strong>{email}</strong>. Confirm your email, then sign in.</p>
               <Button variant="strong" size="lg" onClick={() => nav('signin', j)}>Go to Sign In</Button>
             </div>
           ) : (
-            <div style={{ width: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>
               <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <Input label="Password:" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: -12 }}>

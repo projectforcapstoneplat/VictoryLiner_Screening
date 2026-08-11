@@ -21,11 +21,21 @@
   transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
 }
 
+/* Backstop against any inline fixed-width element we haven't caught —
+   without this, one overflowing element causes the whole page to
+   horizontally scroll instead of just clipping/wrapping that element.
+   Needs to be on html, not just body — body's own overflow doesn't
+   reliably stop the root/viewport scrolling box in every browser. */
+html {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: var(--font-ui);
   color: var(--text-primary);
   background: var(--surface-page);
+  overflow-x: hidden;
 }
 
 a {
@@ -265,5 +275,61 @@ a {
   }
   .float-badge, .scroll-chevron, .marquee-track, .bg-blob {
     animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Responsive — the app is styled almost entirely with inline styles (not
+   this stylesheet), so there's no way to attach a plain @media rule to most
+   elements. These target the specific className hooks added to the highest-
+   traffic layouts (Header, Footer, hero, multi-column grids, auth-form
+   cards) — !important is deliberate here, it's the only way an external
+   stylesheet rule can win over an inline style, which is what's needed to
+   override those pages' hardcoded desktop padding/widths.
+   ------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .page-header-wrap {
+    padding: 20px 16px 0 !important;
+  }
+  .app-header {
+    height: auto !important;
+    padding: 14px 18px !important;
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .app-header-nav {
+    gap: 14px !important;
+    font-size: var(--text-sm) !important;
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .app-footer {
+    padding: 36px 24px !important;
+  }
+  .hero-content {
+    padding: 0 24px !important;
+    max-width: 100% !important;
+  }
+  .hero-title {
+    font-size: var(--text-4xl) !important;
+  }
+  .hero-trust-badge {
+    right: 16px !important;
+    bottom: 16px !important;
+    padding: 10px 14px !important;
+  }
+  .responsive-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .auth-card {
+    padding: 36px 20px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Decorative only — at this width it collides with the hero CTA buttons
+     more than it adds, so it's dropped rather than fought with further. */
+  .hero-trust-badge {
+    display: none !important;
   }
 }

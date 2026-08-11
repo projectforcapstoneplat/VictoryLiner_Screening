@@ -10,6 +10,8 @@ import { Privacy } from './pages/Privacy.jsx';
 import { Terms } from './pages/Terms.jsx';
 import { Contact } from './pages/Contact.jsx';
 import { SignIn } from './pages/SignIn.jsx';
+import { ForgotPassword } from './pages/ForgotPassword.jsx';
+import { ResetPassword } from './pages/ResetPassword.jsx';
 import { CreateAccount } from './pages/CreateAccount.jsx';
 import { ApplicationForm } from './pages/ApplicationForm.jsx';
 import { HrLogin } from './pages/HrLogin.jsx';
@@ -56,8 +58,15 @@ export function App() {
       setSession(data.session);
       setSessionChecked(true);
     });
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
+      // Fired when the applicant lands back here via a password-reset email
+      // link — Supabase has already verified the token and started a
+      // recovery session by this point, so just route to the set-new-
+      // password screen instead of treating it as a normal sign-in.
+      if (event === 'PASSWORD_RECOVERY') {
+        setScreen('reset-password');
+      }
     });
     return () => subscription.subscription.unsubscribe();
   }, []);
@@ -81,6 +90,8 @@ export function App() {
   if (screen === 'terms') return <Terms nav={nav} />;
   if (screen === 'contact') return <Contact nav={nav} />;
   if (screen === 'signin') return <SignIn job={job} nav={nav} />;
+  if (screen === 'forgot-password') return <ForgotPassword nav={nav} />;
+  if (screen === 'reset-password') return <ResetPassword nav={nav} />;
   if (screen === 'create') return <CreateAccount job={job} nav={nav} />;
   if (screen === 'hr-login') return <HrLogin nav={nav} />;
 

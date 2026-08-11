@@ -4,10 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
-import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish } from '../lib/interview.js';
+import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt } from '../lib/interview.js';
+import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
 
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
+const MAX_ATTEMPTS = 3;
 
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -190,6 +192,8 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
   const [showTaglish, setShowTaglish] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState('');
+  const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
+  const [recovery, setRecovery] = useState(null);
 
   const videoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -207,6 +211,33 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
     };
   }, [stream]);
 
+  // Checks for a locally-backed-up recording from a session that got cut
+  // off (lost connection, crashed tab, sudden power loss) before it could
+  // upload — offered back to the applicant instead of silently discarded.
+  useEffect(() => {
+    if (response.video_path) {
+      clearRecoveryChunks(applicationId, response.question_id);
+      return;
+    }
+    loadRecoveryChunks(applicationId, response.question_id).then((found) => {
+      if (found?.chunks?.length) setRecovery(found);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Warns before an accidental close/refresh mid-recording — the one kind
+  // of interruption this can actually catch and prevent, unlike a real
+  // power loss or connection drop.
+  useEffect(() => {
+    if (mode !== 'countdown' && mode !== 'recording') return;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [mode]);
+
   const startRecording = () => {
     chunksRef.current = [];
     let recorder;
@@ -219,7 +250,12 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
       return;
     }
     recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
+      if (e.data.size === 0) return;
+      chunksRef.current.push(e.data);
+      // Backs up what's been recorded so far every ~1s (the timeslice below)
+      // rather than only at the end — so a sudden interruption mid-recording
+      // only loses the last second, not the whole take.
+      saveRecoveryChunks(applicationId, response.question_id, [...chunksRef.current]);
     };
     recorder.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
@@ -229,9 +265,13 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
       setStream(null);
     };
     mediaRecorderRef.current = recorder;
-    recorder.start();
+    recorder.start(1000);
     setRecordSecondsLeft(RECORD_SECONDS);
     setMode('recording');
+
+    const nextAttempt = attemptCount + 1;
+    setAttemptCount(nextAttempt);
+    recordAttempt(applicationId, response.question_id, nextAttempt);
   };
 
   const stopRecording = () => {
@@ -280,6 +320,7 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
   };
 
   const reRecord = () => {
+    if (attemptCount >= MAX_ATTEMPTS) return;
     setRecordedBlob(null);
     beginCountdown();
   };
@@ -295,11 +336,25 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
     });
     setUploading(false);
     if (uploadError) {
-      setError('Upload failed. Check your connection and try again.');
+      setError(uploadError.message || 'Upload failed. Check your connection and try again.');
       return;
     }
+    clearRecoveryChunks(applicationId, response.question_id);
     setMode('submitted');
     onSubmitted(data);
+  };
+
+  const resumeRecovery = () => {
+    const blob = new Blob(recovery.chunks, { type: 'video/webm' });
+    setRecordedBlob(blob);
+    setRevealed(true);
+    setMode('preview');
+    setRecovery(null);
+  };
+
+  const discardRecovery = () => {
+    clearRecoveryChunks(applicationId, response.question_id);
+    setRecovery(null);
   };
 
   const handleTranslate = async () => {
@@ -321,11 +376,15 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
 
   const questionText = response.interview_questions?.question_text;
   const displayedQuestion = showTaglish && taglish ? taglish : questionText;
+  const attemptsLeft = MAX_ATTEMPTS - attemptCount;
+  const atAttemptLimit = attemptCount >= MAX_ATTEMPTS;
 
   return (
     <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
-        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Question {index + 1} of 3</div>
+        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>
+          Question {index + 1} of 3{revealed && ` — Attempt ${Math.min(attemptCount, MAX_ATTEMPTS)} of ${MAX_ATTEMPTS}`}
+        </div>
         {revealed && (
           <Button variant="ghost" size="sm" onClick={handleTranslate} disabled={translating}>
             {translating ? 'Translating…' : showTaglish ? 'Show Original' : '🌐 Translate to Taglish'}
@@ -333,16 +392,34 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
         )}
       </div>
 
+      {recovery && (
+        <div style={{ background: 'var(--pink-100)', borderRadius: 'var(--radius-sm)', padding: '14px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
+            We found a recording for this question from before an interruption. Resume it, or discard and start over?
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <Button variant="strong" size="sm" onClick={resumeRecovery}>Resume Recording</Button>
+            <Button variant="ghost" size="sm" onClick={discardRecovery}>Discard</Button>
+          </div>
+        </div>
+      )}
+
       {!revealed ? (
-        <>
-          <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0, opacity: 0.6, fontStyle: 'italic' }}>
-            This question stays hidden until you start — that keeps things fair for every applicant.
+        atAttemptLimit && !recovery ? (
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
+            You've used all {MAX_ATTEMPTS} attempts for this question without a submitted answer. Contact HR for help.
           </p>
-          {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
-          <Button variant="strong" size="sm" onClick={beginCountdown} disabled={requestingCamera}>
-            {requestingCamera ? 'Starting Camera…' : 'Start Question'}
-          </Button>
-        </>
+        ) : (
+          <>
+            <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0, opacity: 0.6, fontStyle: 'italic' }}>
+              This question stays hidden until you start — that keeps things fair for every applicant.
+            </p>
+            {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
+            <Button variant="strong" size="sm" onClick={beginCountdown} disabled={requestingCamera || !!recovery}>
+              {requestingCamera ? 'Starting Camera…' : 'Start Question'}
+            </Button>
+          </>
+        )
       ) : (
         <>
           <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
@@ -350,9 +427,13 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
           {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
 
           {mode === 'submitted' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>✓ Answer submitted</span>
-              <Button variant="ghost" size="sm" onClick={reRecord}>Re-record</Button>
+              {atAttemptLimit ? (
+                <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts for this question.</span>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={reRecord}>Re-record ({attemptsLeft} left)</Button>
+              )}
             </div>
           )}
 
@@ -381,9 +462,13 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
           {mode === 'preview' && recordedBlob && (
             <div>
               <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', maxWidth: 480, borderRadius: 8, background: '#000' }} />
-              <div style={{ marginTop: 10, display: 'flex', gap: 12 }}>
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
-                <Button variant="ghost" size="sm" onClick={reRecord} disabled={uploading}>Re-record</Button>
+                {atAttemptLimit ? (
+                  <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts — this take is final.</span>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>
+                )}
               </div>
             </div>
           )}
@@ -418,7 +503,7 @@ export function Interview({ application, profile, nav }) {
   if (!application) {
     return (
       <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-        <div style={{ padding: '30px 60px 0' }}><Header links={[]} /></div>
+        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
         <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
           <p>No application selected.</p>
           <Button variant="ghost" size="sm" onClick={() => nav('my-applications')}>Back to My Applications</Button>
@@ -431,13 +516,13 @@ export function Interview({ application, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header links={[]} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
       <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
         <div onClick={() => nav('my-applications')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', marginBottom: 20 }}>&larr; Back to My Applications</div>
         <div style={{ marginBottom: 40, padding: '0 40px' }}><Stepper current={3} /></div>
         <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>Video Interview — {application.job_postings?.title}</h1>
         <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>
-          Each question stays hidden until you click Start. You'll get 5 seconds to prepare, then 1 minute to answer — you can re-record before or after submitting.
+          Each question stays hidden until you click Start. You'll get 5 seconds to prepare, then 1 minute to answer — you can re-record up to {MAX_ATTEMPTS} times per question, before or after submitting.
         </p>
 
         {loadError && <p style={{ color: 'var(--red-700)' }}>{loadError}</p>}
