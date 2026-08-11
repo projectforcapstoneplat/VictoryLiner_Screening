@@ -4,13 +4,18 @@
 // to the browser. Any signed-in user may call this (not HR-only), since
 // applicants are the ones using it from the Interview screen.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
 
+// Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
+// your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
+// once you have one, to stop other sites' browsers from being able to call this.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const GEMINI_MODEL = 'gemini-3.6-flash';
+// Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 const SYSTEM_PROMPT =
   'You translate a single job-interview question into Taglish — a natural mix of Tagalog and English the way ' +
@@ -37,6 +42,10 @@ Deno.serve(async (req) => {
     } = await callerClient.auth.getUser();
     if (!user) {
       return json({ error: 'Not authenticated.' }, 401);
+    }
+
+    if (await checkRateLimit(callerClient, user.id, 'translate-question', 15, 10)) {
+      return json({ error: 'Too many translation requests — please wait a few minutes and try again.' }, 429);
     }
 
     const { text } = await req.json();

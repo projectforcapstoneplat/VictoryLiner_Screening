@@ -151,7 +151,7 @@ export function JobPostingForm({ job, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header links={[]} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
       <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
         <div onClick={() => nav('hr-dashboard')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', marginBottom: 20 }}>&larr; Back to Dashboard</div>
         <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 30px' }}>{isEdit ? 'Edit Job Posting' : 'New Job Posting'}</h1>

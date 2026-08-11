@@ -156,7 +156,7 @@ function StatsStrip({ openPositions, jobsLoaded }) {
   ];
   return (
     <section ref={ref} style={{ maxWidth: 1066, margin: '70px auto 0', padding: '0 20px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '40px 20px' }}>
+      <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '40px 20px' }}>
         {stats.map((s, i) => <StatTile key={s.label} {...s} trigger={trigger} delay={i * 0.1} />)}
       </div>
     </section>
@@ -172,7 +172,7 @@ function AboutSection() {
           Connecting Filipino communities, one journey at a time — and now hiring the people who make every trip possible.
         </Reveal>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
+      <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
         {ABOUT_POINTS.map((p, i) => (
           <Reveal key={p.title} delay={i * 0.12} className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '30px 26px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{p.icon}</div>
@@ -327,8 +327,8 @@ export function Homepage({ nav, profile, scrollTarget }) {
       <div style={{ position: 'relative', height: 520, marginTop: 40, overflow: 'hidden' }}>
         <img src={heroBase} alt="" className="hero-zoom" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(9,9,9,0.75) 0%, rgba(9,9,9,0.5) 50%, rgba(9,9,9,0.15) 100%)' }} />
-        <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', maxWidth: 640, padding: '0 80px', color: 'var(--off-white-300)' }}>
-          <h1 className="fade-in-up" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-7xl)', lineHeight: 1.15, margin: '0 0 20px' }}>
+        <div className="hero-content" style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', maxWidth: 640, padding: '0 80px', color: 'var(--off-white-300)' }}>
+          <h1 className="hero-title fade-in-up" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-7xl)', lineHeight: 1.15, margin: '0 0 20px' }}>
             Drive Your Career Forward with Victory Liner
           </h1>
           <p className="fade-in-up" style={{ fontSize: 'var(--text-lg)', fontWeight: 300, opacity: 0.9, margin: '0 0 32px', animationDelay: '0.12s' }}>
@@ -348,7 +348,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
         </div>
 
         {/* Floating trust badge — small bit of motion/depth over the hero photo itself, not just text fading in. */}
-        <div className="fade-in-up float-badge" style={{
+        <div className="fade-in-up float-badge hero-trust-badge" style={{
           animationDelay: '0.4s', position: 'absolute', right: 60, bottom: 56, zIndex: 1,
           background: 'rgba(255,255,255,0.95)', borderRadius: 16, padding: '16px 22px',
           display: 'flex', alignItems: 'center', gap: 14, boxShadow: '0 12px 30px rgba(0,0,0,0.25)',
@@ -387,7 +387,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
           <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: '0 0 40px' }}>Get started on your new career path in three easy steps.</Reveal>
           <div ref={connectorRef} style={{ position: 'relative' }}>
             <div className={['process-connector', connectorInView ? 'process-connector-visible' : ''].filter(Boolean).join(' ')} />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, textAlign: 'left', position: 'relative' }}>
+            <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, textAlign: 'left', position: 'relative' }}>
               {PROCESS_STEPS.map((s, i) => <ProcessCard key={s.title} index={i} title={s.title} description={s.description} icon={s.icon} />)}
             </div>
           </div>
@@ -415,7 +415,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
         {displayedJobs.length === 0 ? (
           <p style={{ opacity: 0.7 }}>No open positions match your search right now.</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
+          <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
             {displayedJobs.map((j, i) => (
               <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('signin', j)} />
             ))}
@@ -430,7 +430,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
         <div className="bg-blob" aria-hidden="true" style={{ position: 'absolute', top: 40, right: -160, width: 420, height: 420, borderRadius: '50%', background: 'var(--surface-blob)', filter: 'blur(100px)', opacity: 0.6, zIndex: 0, animationDelay: '3s' }} />
 
         <section style={{ maxWidth: 1066, margin: '90px auto 0', padding: '40px 20px', background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', position: 'relative', zIndex: 1 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+          <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
             {FEATURES.map((f, i) => <FeatureItem key={f.title} index={i} title={f.title} description={f.description} />)}
           </div>
         </section>

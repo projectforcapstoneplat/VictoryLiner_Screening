@@ -15,7 +15,7 @@ const SECTIONS = [
   },
   {
     h: 'Video Interview Conduct',
-    body: 'When recording video interview answers, you\'re responsible for the content of your responses. You may re-record any answer as many times as you like before or after submitting, up until HR makes a decision on your application.',
+    body: 'When recording video interview answers, you\'re responsible for the content of your responses. Each question is hidden until you start it and is timed once you begin. You may re-record an answer up to 3 times per question, before or after submitting, up until HR makes a decision on your application.',
   },
   {
     h: 'Application Finality',
@@ -38,7 +38,7 @@ const SECTIONS = [
 export function Terms({ nav }) {
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 820, margin: '70px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up" style={{ marginBottom: 44 }}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>Legal</div>

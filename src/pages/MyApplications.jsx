@@ -45,7 +45,7 @@ export function MyApplications({ profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header links={[]} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
       <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
         <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>My Applications</h1>
         <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>Track your submitted applications and complete your video interview here.</p>

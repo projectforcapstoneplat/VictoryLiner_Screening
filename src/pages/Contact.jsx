@@ -26,7 +26,7 @@ const CHANNELS = [
 export function Contact({ nav }) {
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }}><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1000, margin: '70px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up" style={{ marginBottom: 44 }}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>Get In Touch</div>
@@ -36,7 +36,7 @@ export function Contact({ nav }) {
           </p>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 50 }}>
+        <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 50 }}>
           {CHANNELS.map((c, i) => (
             <Reveal key={c.label} delay={i * 0.1} style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{c.icon}</div>

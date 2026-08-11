@@ -34,6 +34,14 @@ Then repeat once more with `supabase/migrations/0008_application_extra_fields.sq
 
 Then repeat once more with `supabase/migrations/0009_application_profile_fields.sql`. This adds a structured highest-educational-attainment level, the applicant's current location, and a medical/physical fitness certificate flag to `applications` — closing the remaining gaps between what the apply form collects and what the AI evaluator and HR reviewers actually need to screen accurately.
 
+Then repeat once more with `supabase/migrations/0010_interview_response_attempts.sql`. This adds an `attempt_count` column to `interview_responses`, tracking how many times each interview answer has been (re-)recorded — capped client-side at 3 attempts per question, tracked server-side so the cap survives a page reload.
+
+Then repeat once more with `supabase/migrations/0011_storage_limits.sql`. This caps the `interview-videos` bucket at 50MB per file and restricts uploads to `video/webm` — server-side enforcement of the same limit the client already checks, so it can't be bypassed by a tampered client.
+
+Then repeat once more with `supabase/migrations/0012_ai_rate_limits.sql`. This adds the `ai_rate_limits` table the Gemini-calling edge functions use to cap how many requests one user can make in a 10-minute window, so a spammed button (or a script) can't run up an unbounded Gemini bill.
+
+Then repeat once more with `supabase/migrations/0013_application_decision_log.sql`. This adds the `application_decision_log` table — an audit trail of who advanced/declined each application and when, shown on the Applicants view next to each decision.
+
 Run any later `NNNN_*.sql` files the same way, in order — they're all safe to re-run (`create table if not exists` / `drop policy if exists`).
 
 ## 4. Bootstrap the first HR head account
@@ -108,6 +116,20 @@ supabase functions deploy translate-question
 - `evaluate-interview-response` sends a recorded answer's video directly to Gemini (it accepts video natively — no separate speech-to-text step) and gets back a transcript, sentiment tone, relevance to the question, an overall score, and an explanation, written to `interview_evaluations`. This runs automatically, one answer at a time, when HR opens a job's Applicants list, same as resume evaluation.
 - `translate-question` powers the "🌐 Translate to Taglish" button an applicant sees on each interview question, once revealed — any signed-in user may call it (not HR-only), and nothing is persisted, it's translated on demand each time.
 
+## 9. (Optional, before going live) Restrict edge function CORS to your real domain
+
+Every edge function defaults to `Access-Control-Allow-Origin: *`, which is fine for local development but means any website's browser could technically call these endpoints (they're still gated by JWT auth + RLS underneath, so this isn't a data-access hole — it's just unnecessary exposure). Once you know the domain the frontend will actually be deployed to, lock it down:
+
+```
+supabase secrets set ALLOWED_ORIGIN=https://your-real-domain.com
+supabase functions deploy suggest-criteria
+supabase functions deploy evaluate-application
+supabase functions deploy suggest-interview-questions
+supabase functions deploy evaluate-interview-response
+supabase functions deploy translate-question
+supabase functions deploy create-hr-account
+```
+
 ## Where the schema lives
 
 - `supabase/migrations/0001_init.sql` — tables, trigger, RLS policies (source of truth for the DB schema).
@@ -117,6 +139,11 @@ supabase functions deploy translate-question
 - `supabase/functions/suggest-interview-questions/` — edge function used by the HR Interview Questions screen to draft category-scoped interview questions.
 - `supabase/functions/evaluate-interview-response/` — edge function used by the Applicants view to transcribe and score one recorded video answer, caching the result in `interview_evaluations`.
 - `supabase/functions/translate-question/` — edge function used by the applicant's Interview screen to translate a question into Taglish on demand.
+- `supabase/functions/_shared/rateLimit.ts` — shared helper the AI edge functions import to enforce a per-user rate limit against `ai_rate_limits`.
+- `supabase/migrations/0010_interview_response_attempts.sql` — adds `attempt_count` to `interview_responses`, enforcing a 3-attempt cap per question.
+- `supabase/migrations/0011_storage_limits.sql` — caps the `interview-videos` bucket at 50MB and `video/webm` only.
+- `supabase/migrations/0012_ai_rate_limits.sql` — adds `ai_rate_limits`, backing the per-user rate limit on the Gemini-calling edge functions.
+- `supabase/migrations/0013_application_decision_log.sql` — adds `application_decision_log`, an audit trail of HR advance/decline decisions.
 
 ## Mapping to the thesis ERD (Figure 13)
 

@@ -104,13 +104,49 @@ export async function listApplicationsForApplicant(applicantId) {
 
 // HR Personnel's advance/decline decision (paper: "Advances or declines
 // candidates based on system-generated results") — HR Head can see the
-// result via reports but never calls this itself.
-export async function updateApplicationStatus(applicationId, status) {
+// result via reports but never calls this itself. Also writes an audit-log
+// row recording who decided and when, kept separate from `status` itself so
+// the history survives regardless of what happens to the application later.
+//
+// The `.eq('status', 'submitted')` guard makes this an atomic compare-and-
+// swap: with multiple HR Personnel able to act on the same applicant, two
+// people could both load the page while it's still "submitted" and both
+// click a decision — without this guard, the second write would silently
+// overwrite the first with no indication anything was already decided.
+// Postgres applies the WHERE+SET as one operation, so there's no window for
+// both to succeed; the loser gets back the real current state instead.
+export async function updateApplicationStatus(applicationId, status, decidedBy) {
   const { data, error } = await supabase
     .from('applications')
     .update({ status })
     .eq('id', applicationId)
+    .eq('status', 'submitted')
     .select()
     .single();
-  return { data, error };
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      const { data: current } = await supabase.from('applications').select('*').eq('id', applicationId).maybeSingle();
+      return {
+        data: current,
+        error: { code: 'ALREADY_DECIDED', message: `This application was already ${current?.status === 'declined' ? 'declined' : 'advanced'} by someone else.` },
+      };
+    }
+    return { data: null, error };
+  }
+
+  await supabase.from('application_decision_log').insert({ application_id: applicationId, decided_by: decidedBy, status });
+  return { data, error: null };
+}
+
+// Reads the decision-audit trail for a set of applications — who advanced/
+// declined each one, and when. HR-only via RLS.
+export async function listDecisionLogForApplications(applicationIds) {
+  if (!applicationIds.length) return { data: [] };
+  const { data, error } = await supabase
+    .from('application_decision_log')
+    .select('*, profiles(full_name, email)')
+    .in('application_id', applicationIds)
+    .order('decided_at', { ascending: false });
+  return { data: data || [], error };
 }
