@@ -8,7 +8,7 @@ import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
 import { listPublishedJobs } from '../lib/jobs.js';
 import { useInView } from '../lib/useInView.js';
 import { useCountUp } from '../lib/useCountUp.js';
-import { JOB_CATEGORIES } from '../lib/jobCategories.js';
+import { listJobCategories } from '../lib/jobCategories.js';
 import { signOut } from '../lib/auth.js';
 import heroBase from '../assets/hero-bus-base.jpg';
 import searchIconOutline from '../assets/search-icon-outline.svg';
@@ -104,10 +104,10 @@ function OpenRoleCard({ index, job, onView, onApply }) {
       className="hover-lift"
       style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 12 }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div className="job-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <CategoryIcon category={job.category} />
-          <strong style={{ fontSize: 'var(--text-lg)' }}>{job.title}</strong>
+          <strong className="job-card-title" style={{ fontSize: 'var(--text-lg)' }}>{job.title}</strong>
         </div>
         {job.employment_type && (
           <span style={{ fontSize: 'var(--text-xs)', padding: '4px 12px', borderRadius: 999, background: 'var(--pink-100)', color: 'var(--red-700)', whiteSpace: 'nowrap' }}>
@@ -230,8 +230,9 @@ function AccountChip({ profile, onSignOut }) {
 // duplicated back-to-back and the track animates exactly -50% so the loop is
 // seamless. Gives the page a bit of motion that doesn't depend on the user
 // scrolling or hovering anything, which a static category list wouldn't.
-function CategoryMarquee() {
-  const items = [...JOB_CATEGORIES, ...JOB_CATEGORIES];
+function CategoryMarquee({ categories }) {
+  if (categories.length === 0) return null;
+  const items = [...categories, ...categories];
   return (
     <section style={{ margin: '70px 0 0', padding: '28px 0', background: 'var(--surface-card)', boxShadow: 'var(--shadow-hairline)' }}>
       <div className="marquee-row" style={{ overflow: 'hidden' }}>
@@ -251,6 +252,7 @@ function CategoryMarquee() {
 export function Homepage({ nav, profile, scrollTarget }) {
   const [jobs, setJobs] = useState([]);
   const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
   const [scrolled, setScrolled] = useState(false);
   const [scrollPct, setScrollPct] = useState(0);
@@ -260,6 +262,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
       setJobs(data);
       setJobsLoaded(true);
     });
+    listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
   }, []);
 
   useEffect(() => {
@@ -291,9 +294,12 @@ export function Homepage({ nav, profile, scrollTarget }) {
     return () => clearTimeout(id);
   }, [scrollTarget]);
 
-  const handleSignOut = async () => {
-    await signOut();
+  // Same ordering fix as HrShell.jsx's handleSignOut — nav first, then
+  // signOut(), so a gated screen never re-renders mid-signOut against an
+  // already-null session while `screen` hasn't caught up yet.
+  const handleSignOut = () => {
     nav('home');
+    signOut();
   };
 
   const [connectorRef, connectorInView] = useInView({ threshold: 0.4 });
@@ -311,7 +317,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
       <div style={{ position: 'fixed', top: 0, left: 0, width: `${scrollPct}%`, height: 3, background: 'linear-gradient(90deg, var(--red-700), var(--action-primary-bg))', zIndex: 60, transition: 'width 0.1s linear' }} />
       <div style={{
         position: 'sticky', top: 0, zIndex: 50, boxSizing: 'border-box',
-        padding: scrolled ? '14px 60px' : '30px 60px 0',
+        padding: scrolled ? '14px clamp(16px, 4vw, 60px)' : '30px clamp(16px, 4vw, 60px) 0',
         background: scrolled ? 'var(--surface-page-alt)' : 'transparent',
         boxShadow: scrolled ? '0 6px 18px rgba(0,0,0,0.06)' : 'none',
         transition: 'padding 0.25s ease, background 0.25s ease, box-shadow 0.25s ease',
@@ -394,7 +400,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
         </section>
       </div>
 
-      <CategoryMarquee />
+      <CategoryMarquee categories={categories} />
 
       <section style={{ maxWidth: 1066, margin: '90px auto 0', padding: '0 20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
@@ -417,7 +423,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
         ) : (
           <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
             {displayedJobs.map((j, i) => (
-              <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('signin', j)} />
+              <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('apply', j)} />
             ))}
           </div>
         )}

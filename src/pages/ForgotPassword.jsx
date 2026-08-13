@@ -7,11 +7,13 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { requestPasswordReset } from '../lib/auth.js';
 
-export function ForgotPassword({ nav }) {
+export function ForgotPassword({ nav, variant = 'applicant' }) {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const backScreen = variant === 'hr' ? 'hr-login' : 'signin';
+  const backLabel = variant === 'hr' ? 'Back to HR Portal' : 'Back to Sign In';
 
   const handleSubmit = async () => {
     if (!email.trim()) {
@@ -33,7 +35,7 @@ export function ForgotPassword({ nav }) {
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
-        <div onClick={() => nav('signin')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Sign In</div>
+        <div onClick={() => nav(backScreen)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; {backLabel}</div>
         <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: '30px auto 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }} className="auth-card">
           <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 4px' }}>Reset Your Password</h2>
           {sent ? (
@@ -41,7 +43,7 @@ export function ForgotPassword({ nav }) {
               <p style={{ fontSize: 'var(--text-sm)' }}>
                 If an account exists for <strong>{email}</strong>, we've sent a link to reset your password. Check your inbox (and spam folder).
               </p>
-              <Button variant="strong" size="lg" onClick={() => nav('signin')}>Back to Sign In</Button>
+              <Button variant="strong" size="lg" onClick={() => nav(backScreen)}>{backLabel}</Button>
             </div>
           ) : (
             <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>

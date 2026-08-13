@@ -11,6 +11,18 @@ export async function listEvaluationsForJob(jobId) {
   return { data: data || [], error };
 }
 
+// Same read as listEvaluationsForJob, but scoped to a specific set of
+// application ids instead of a whole job — used by MyApplications.jsx to
+// check an applicant's own resume score against the screening threshold.
+export async function listResumeEvaluationsForApplications(applicationIds) {
+  if (!applicationIds.length) return { data: [] };
+  const { data, error } = await supabase
+    .from('resume_evaluations')
+    .select('*')
+    .in('application_id', applicationIds);
+  return { data: data || [], error };
+}
+
 // Calls the AI to (re-)evaluate one application against its job's screening
 // criteria. Persists the result server-side, so callers should treat the
 // resolved value as the new source of truth for that application's score.

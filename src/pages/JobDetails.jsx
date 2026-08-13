@@ -55,7 +55,7 @@ export function JobDetails({ job, nav }) {
   ].filter((s) => s.body);
   const deadline = deadlineInfo(j.application_deadline);
   const canApply = !deadline?.closed;
-  const handleApply = () => canApply && nav('signin', j);
+  const handleApply = () => canApply && nav('apply', j);
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>

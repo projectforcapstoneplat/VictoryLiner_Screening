@@ -294,14 +294,17 @@ a {
   .app-header {
     height: auto !important;
     padding: 14px 18px !important;
-    flex-wrap: wrap;
-    row-gap: 10px;
   }
+  /* Below 640px the inline link row (Open Roles / How It Works / Track
+     Application / About Us / Apply Now) doesn't fit no matter how much it
+     wraps — it just turns into a cramped, illegible 2x2 grid. Hidden in
+     favor of the hamburger dropdown instead (.app-header-mobile-controls),
+     which stays visible at this width. */
   .app-header-nav {
-    gap: 14px !important;
-    font-size: var(--text-sm) !important;
-    flex-wrap: wrap;
-    row-gap: 10px;
+    display: none !important;
+  }
+  .app-header-mobile-controls {
+    display: flex !important;
   }
   .app-footer {
     padding: 36px 24px !important;
@@ -324,6 +327,19 @@ a {
   .auth-card {
     padding: 36px 20px !important;
   }
+  /* Job cards (Homepage's OpenRoleCard, JobFilter's JobResultCard): the
+     title was squeezed into whatever space was left after the category
+     icon AND the employment-type badge shared one row, wrapping a long
+     title into a tall, cramped stack. Dropping the badge to its own row
+     gives the title the full card width to wrap normally. */
+  .job-card-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+  .job-card-title {
+    font-size: var(--text-lg) !important;
+  }
 }
 
 @media (max-width: 480px) {
@@ -331,5 +347,89 @@ a {
      more than it adds, so it's dropped rather than fought with further. */
   .hero-trust-badge {
     display: none !important;
+  }
+}
+
+/* HR Command Center top-bar search — browsers default placeholder text to a
+   low-opacity gray, which reads as barely-there against the translucent
+   white pill on a red gradient header. Bumped to near-white so it's
+   actually legible instead of looking like an empty, purposeless box. */
+.hr-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* HrShell (HR Head, HR Personnel, Applicants, Job Openings, Interview
+   Questions, HR Accounts — every HR-authenticated screen shares this
+   layout) — the 232px fixed sidebar plus a 4-column KPI grid never had any
+   narrow-viewport treatment: the sidebar just ate half a phone screen,
+   squeezing everything else into an unreadable sliver. 900px (not the
+   640px used elsewhere) because reserving 232px for a permanent sidebar
+   starts cramping content well before a phone-only breakpoint would. */
+@media (max-width: 900px) {
+  .hr-shell-hamburger {
+    display: flex !important;
+  }
+  .hr-shell-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 80;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.25);
+  }
+  .hr-shell-sidebar-open {
+    transform: translateX(0);
+  }
+  .hr-shell-sidebar-close {
+    display: flex !important;
+  }
+  .hr-shell-backdrop {
+    display: block !important;
+  }
+  .hr-shell-search {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .hr-shell-header {
+    padding: 0 14px !important;
+  }
+  .hr-shell-header-label {
+    display: none !important;
+  }
+  .hr-shell-main {
+    padding: 18px 16px 40px !important;
+  }
+  .hr-applicant-card {
+    flex-direction: column !important;
+  }
+  .hr-applicant-card-scores {
+    flex-direction: row !important;
+  }
+}
+
+/* HR dashboard content grids — 4-up KPI rows and 2-column report cards
+   (candidate ranking/sentiment, screening queue video+details, charts)
+   never had a narrower-viewport fallback; below these widths they were
+   squeezing real content (a video player, chart bars, score rows) into
+   columns too thin to read. Breakpoints are independent of the sidebar's
+   900px collapse above — the sidebar becoming an overlay already frees up
+   the full viewport width for content, so these can stay wider for longer. */
+@media (max-width: 700px) {
+  .hr-kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+@media (max-width: 420px) {
+  .hr-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+@media (max-width: 780px) {
+  .hr-two-col-grid {
+    grid-template-columns: 1fr !important;
   }
 }

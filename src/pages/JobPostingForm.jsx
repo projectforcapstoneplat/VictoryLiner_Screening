@@ -6,7 +6,7 @@ import { Input } from '../components/core/Input/Input.jsx';
 import { Select } from '../components/core/Select/Select.jsx';
 import { createJob, updateJob } from '../lib/jobs.js';
 import { listCriteriaForJob, replaceCriteriaForJob, suggestCriteria } from '../lib/criteria.js';
-import { JOB_CATEGORIES } from '../lib/jobCategories.js';
+import { listJobCategories } from '../lib/jobCategories.js';
 
 const EMPTY = {
   title: '', category: '', location: '', employment_type: '', open_positions: 1,
@@ -67,10 +67,15 @@ export function JobPostingForm({ job, profile, nav }) {
   const isEdit = Boolean(job?.id);
   const [form, setForm] = useState(() => ({ ...EMPTY, ...job }));
   const [criteria, setCriteria] = useState([{ ...EMPTY_CRITERION }]);
+  const [categories, setCategories] = useState([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestError, setSuggestError] = useState('');
+
+  useEffect(() => {
+    listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
+  }, []);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -131,6 +136,9 @@ export function JobPostingForm({ job, profile, nav }) {
       ...form,
       open_positions: Number(form.open_positions) || 1,
       application_deadline: form.application_deadline || null,
+      min_resume_match_percent: form.min_resume_match_percent === '' || form.min_resume_match_percent == null
+        ? null
+        : Math.max(0, Math.min(100, Math.round(Number(form.min_resume_match_percent)))),
     };
     const { data: savedJob, error: saveError } = isEdit
       ? await updateJob(job.id, payload)
@@ -158,7 +166,7 @@ export function JobPostingForm({ job, profile, nav }) {
         <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '40px 50px', display: 'flex', flexDirection: 'column', gap: 20 }}>
           <Input label="Title:" value={form.title} onChange={set('title')} />
           <div style={{ display: 'flex', gap: 20 }}>
-            <Select label="Category:" value={form.category} onChange={set('category')} options={JOB_CATEGORIES} placeholder="Select a category" />
+            <Select label="Category:" value={form.category} onChange={set('category')} options={categories} placeholder="Select a category" />
             <Input label="Location:" value={form.location} onChange={set('location')} />
           </div>
           <div style={{ display: 'flex', gap: 20 }}>
@@ -178,6 +186,18 @@ export function JobPostingForm({ job, profile, nav }) {
             suggesting={suggesting}
             suggestError={suggestError}
           />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <Input
+              label="Minimum Resume Match to Unlock Interview (optional):"
+              type="number"
+              min={0}
+              max={100}
+              placeholder="Uses the system-wide default"
+              value={form.min_resume_match_percent ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, min_resume_match_percent: e.target.value === '' ? null : e.target.value }))}
+              hint="Leave blank to use the system-wide default set on the HR Head dashboard. Set a number (0–100) to require a different resume match score just for this role."
+            />
+          </div>
           <p style={{ fontSize: 'var(--text-sm)', margin: 0, opacity: 0.7 }}>
             Accommodations and AI-use disclosures are shown on every job posting automatically — no need to write them here.
           </p>

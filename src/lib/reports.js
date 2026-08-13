@@ -40,16 +40,17 @@ function weekTrend(timestamps) {
 }
 
 async function loadRaw() {
-  const [jobsRes, appsRes, resumeEvalRes, responsesRes, interviewEvalRes, hrRes] = await Promise.all([
+  const [jobsRes, appsRes, resumeEvalRes, responsesRes, interviewEvalRes, hrRes, decisionLogRes] = await Promise.all([
     supabase.from('job_postings').select('*').order('created_at', { ascending: false }),
     supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at'),
     supabase.from('resume_evaluations').select('application_id, job_id, score, evaluated_at'),
     supabase.from('interview_responses').select('id, application_id, video_path, interview_questions(question_text)'),
     supabase.from('interview_evaluations').select('response_id, application_id, evaluation_score, sentiment_label, evaluated_at'),
     supabase.from('profiles').select('id, full_name, email, is_active, created_at').eq('role', 'hr_personnel'),
+    supabase.from('application_decision_log').select('decided_by, status, decided_at, application_id, applications(full_name, job_id)'),
   ]);
 
-  const error = jobsRes.error || appsRes.error || resumeEvalRes.error || responsesRes.error || interviewEvalRes.error || hrRes.error;
+  const error = jobsRes.error || appsRes.error || resumeEvalRes.error || responsesRes.error || interviewEvalRes.error || hrRes.error || decisionLogRes.error;
   if (error) return { error };
 
   const jobs = jobsRes.data || [];
@@ -58,6 +59,7 @@ async function loadRaw() {
   const responses = responsesRes.data || [];
   const interviewEvaluations = interviewEvalRes.data || [];
   const hrPersonnel = hrRes.data || [];
+  const decisionLog = decisionLogRes.data || [];
 
   const jobById = new Map(jobs.map((j) => [j.id, j]));
   const resumeEvalByApp = new Map(resumeEvaluations.map((e) => [e.application_id, e]));
@@ -96,30 +98,53 @@ async function loadRaw() {
       interviewCompleted,
       interviewAnswers: answeredEvals,
       totalScore: combineScore(resumeScore, interviewScore),
-      readyForDecision: resumeScore != null && interviewCompleted && a.status === 'submitted',
+      // "Ready for decision" now means the *final* call — HR already
+      // advanced them past the initial resume review (status ===
+      // 'interview_stage'), and their interview is complete.
+      readyForDecision: resumeScore != null && interviewCompleted && a.status === 'interview_stage',
     };
   });
 
-  return { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, scored };
+  return { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, decisionLog, scored };
 }
 
 // 4-stage pipeline, honest mapping to what the system actually tracks:
 // every application starts at "Applications"; narrows to "Screened" once the
 // AI has a resume score; narrows to "Interviewed" once all 3 video answers
-// are evaluated; narrows to "Decided" once HR has advanced or declined it.
+// are evaluated; narrows to "Decided" once HR has made the final
+// advanced/declined call (not just the stage-1 advance into interview_stage).
 function buildPipeline(rows) {
   return {
     applications: rows.length,
     screened: rows.filter((r) => r.resumeScore != null).length,
     interviewed: rows.filter((r) => r.interviewCompleted).length,
-    decided: rows.filter((r) => r.status !== 'submitted').length,
+    decided: rows.filter((r) => r.status === 'advanced' || r.status === 'declined').length,
   };
+}
+
+// Fixed-width buckets over the 0-100 score range — used for the resume
+// score distribution chart. Order matters (drives left-to-right rendering);
+// count stays 0 rather than being omitted when a bucket is empty, so the
+// chart's x-axis doesn't silently skip a range.
+const SCORE_BUCKETS = [
+  { label: '0-20%', min: 0, max: 20 },
+  { label: '21-40%', min: 21, max: 40 },
+  { label: '41-60%', min: 41, max: 60 },
+  { label: '61-80%', min: 61, max: 80 },
+  { label: '81-100%', min: 81, max: 100 },
+];
+
+function buildScoreDistribution(scores) {
+  return SCORE_BUCKETS.map((b) => ({
+    label: b.label,
+    count: scores.filter((s) => s >= b.min && s <= b.max).length,
+  }));
 }
 
 export async function getHeadOverview() {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, scored } = raw;
+  const { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, decisionLog, scored } = raw;
 
   const jobStats = {
     total: jobs.length,
@@ -152,17 +177,67 @@ export async function getHeadOverview() {
   }
   const sentiment = { ...sentimentCounts, total: interviewEvaluations.length };
 
+  // Unsliced — HrHeadDashboard.jsx filters by job category (if the HR Head
+  // picks one) and takes the top 8 of whatever's left, so filtering doesn't
+  // need a second round trip.
   const topCandidates = scored
     .filter((s) => s.totalScore != null)
-    .sort((a, b) => b.totalScore - a.totalScore)
-    .slice(0, 8);
+    .sort((a, b) => b.totalScore - a.totalScore);
 
   const jobsPostedByHr = new Map();
   for (const j of jobs) {
     if (!j.created_by) continue;
     jobsPostedByHr.set(j.created_by, (jobsPostedByHr.get(j.created_by) || 0) + 1);
   }
-  const hrActivity = hrPersonnel.map((p) => ({ ...p, jobsPosted: jobsPostedByHr.get(p.id) || 0 }));
+  // What HR Personnel actually spend their time on per the paper's role
+  // split — advancing/declining applicants — not job postings, which HR
+  // Head just as often creates. "0 postings created" was always going to
+  // read as empty/broken for a role that mostly makes decisions, not posts.
+  const jobByIdForDecisions = new Map(jobs.map((j) => [j.id, j]));
+  const decisionsByHr = new Map();
+  for (const d of decisionLog) {
+    if (!d.decided_by) continue;
+    const entry = decisionsByHr.get(d.decided_by) || { advanced: 0, declined: 0, interviewStage: 0, lastDecidedAt: null, recent: [] };
+    if (d.status === 'advanced') entry.advanced += 1;
+    else if (d.status === 'declined') entry.declined += 1;
+    else if (d.status === 'interview_stage') entry.interviewStage += 1;
+    if (!entry.lastDecidedAt || new Date(d.decided_at) > new Date(entry.lastDecidedAt)) entry.lastDecidedAt = d.decided_at;
+    entry.recent.push({
+      applicationId: d.application_id,
+      applicantName: d.applications?.full_name || 'Unknown applicant',
+      job: jobByIdForDecisions.get(d.applications?.job_id),
+      status: d.status,
+      decidedAt: d.decided_at,
+    });
+    decisionsByHr.set(d.decided_by, entry);
+  }
+  const hrActivity = hrPersonnel.map((p) => {
+    const decisions = decisionsByHr.get(p.id) || { advanced: 0, declined: 0, interviewStage: 0, lastDecidedAt: null, recent: [] };
+    const recent = [...decisions.recent].sort((a, b) => new Date(b.decidedAt) - new Date(a.decidedAt)).slice(0, 8);
+    return {
+      ...p,
+      jobsPosted: jobsPostedByHr.get(p.id) || 0,
+      decisionsTotal: decisions.advanced + decisions.declined + decisions.interviewStage,
+      advanced: decisions.advanced,
+      declined: decisions.declined,
+      interviewStage: decisions.interviewStage,
+      lastDecidedAt: decisions.lastDecidedAt,
+      recentDecisions: recent,
+    };
+  }).sort((a, b) => b.decisionsTotal - a.decisionsTotal);
+
+  const resumeScoreDistribution = buildScoreDistribution(scored.map((s) => s.resumeScore).filter((n) => n != null));
+
+  const categoryBreakdown = (() => {
+    const byCategory = new Map();
+    for (const s of scored) {
+      const cat = s.job?.category || 'Uncategorized';
+      byCategory.set(cat, (byCategory.get(cat) || 0) + 1);
+    }
+    return [...byCategory.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
 
   const jobBreakdown = jobs.map((job) => {
     const rows = scored.filter((s) => s.jobId === job.id);
@@ -185,30 +260,48 @@ export async function getHeadOverview() {
     data: {
       jobStats, applicantCount: applications.length, funnel, scores, sentiment,
       topCandidates, jobBreakdown, hrActivity, trends,
+      resumeScoreDistribution, categoryBreakdown,
     },
   };
+}
+
+// Full, uncapped applicant list with every score/job field already computed
+// by loadRaw() — backs the "Applicants" tab (HrApplicantsList.jsx), which
+// unlike topCandidates above needs every applicant (not just the top 8
+// scored ones) so HR can filter/sort the whole pool themselves.
+export async function getScoredApplicants() {
+  const raw = await loadRaw();
+  if (raw.error) return { error: raw.error };
+  return { data: { scored: raw.scored, jobs: raw.jobs } };
 }
 
 export async function getPersonnelOverview() {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, applications, resumeEvaluations, interviewEvaluations, scored } = raw;
+  const { jobs, applications, interviewEvaluations, scored } = raw;
 
   const pending = scored.filter((s) => s.readyForDecision).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  const videoPending = scored.filter((s) => !s.interviewCompleted && s.status === 'submitted').length;
-  const decidedCount = scored.filter((s) => s.status !== 'submitted').length;
+  // "Video pending" — HR already advanced them into interview_stage, but
+  // they haven't finished recording yet.
+  const videoPending = scored.filter((s) => !s.interviewCompleted && s.status === 'interview_stage').length;
+  const decidedCount = scored.filter((s) => s.status === 'advanced' || s.status === 'declined').length;
 
   const kpis = {
     totalApplicants: applications.length,
     videoPending,
-    passedScreening: scored.filter((s) => s.resumeScore != null && s.resumeScore >= 50).length,
+    // "Passed initial screening" now means HR actually advanced them past
+    // stage 1 — not just an AI score threshold, since that's HR's call to
+    // make now (the AI score is one input, not the decision itself).
+    passedScreening: scored.filter((s) => s.status !== 'submitted').length,
     readyForDecision: pending.length,
   };
 
   const trends = {
     totalApplicants: weekTrend(applications.map((a) => a.created_at)),
     videoPending: null,
-    passedScreening: weekTrend(resumeEvaluations.filter((e) => e.score >= 50).map((e) => e.evaluated_at)),
+    // No reliable "when HR advanced" timestamp without joining
+    // application_decision_log — drop the trend rather than fake one.
+    passedScreening: null,
     readyForDecision: null,
   };
 

@@ -1,6 +1,8 @@
 // Stat tile used across both HR dashboards. Trend is only ever a real
 // week-over-week comparison computed from actual timestamps (see
 // src/lib/reports.js weekTrend) — never a placeholder number.
+import { useCountUp } from '../../../lib/useCountUp.js';
+
 const ACCENTS = {
   red: { bg: 'var(--pink-100)', fg: 'var(--action-primary-bg)' },
   amber: { bg: '#fdf0da', fg: '#c98500' },
@@ -16,8 +18,13 @@ function TrendArrow({ direction }) {
 
 export function KpiCard({ icon, accent = 'red', label, value, trend }) {
   const { bg, fg } = ACCENTS[accent];
+  // Counts up from 0 the moment the card mounts — by the time this renders,
+  // the dashboard's data fetch has already resolved (see the `{report && ...}`
+  // gate in HrHeadDashboard/HrPersonnelDashboard), so `value` is always the
+  // real final number, never a placeholder mid-count.
+  const displayValue = useCountUp(value, true);
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+    <div className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
         <div style={{ width: 36, height: 36, borderRadius: 10, background: bg, color: fg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -25,7 +32,7 @@ export function KpiCard({ icon, accent = 'red', label, value, trend }) {
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-4xl)' }}>{value}</span>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-4xl)' }}>{displayValue}</span>
         {trend && (
           <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6, display: 'flex', alignItems: 'center', gap: 3 }}>
             <TrendArrow direction={trend.direction} />{trend.label}

@@ -1,6 +1,7 @@
-// Small per-category glyphs for the open-role cards — keyed to the fixed
-// JOB_CATEGORIES list (src/lib/jobCategories.js) so every category gets a
-// distinct, recognizable icon instead of a generic bullet.
+// Small per-category glyphs for the open-role cards — keyed to the seeded
+// job_categories names (src/lib/jobCategories.js). A category HR Head adds
+// later that isn't in this map just falls back to DEFAULT_ICON below,
+// rather than crashing — new categories are expected to be DB-only now.
 const ICON_PROPS = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'var(--action-primary-bg)', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 
 const ICONS = {
