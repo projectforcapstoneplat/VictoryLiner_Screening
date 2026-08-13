@@ -92,6 +92,14 @@ export function HrLogin({ nav }) {
             <Button variant="strong" size="lg" onClick={handleSignIn} disabled={loading}>{loading ? 'Signing In…' : 'Sign In'}</Button>
           </div>
 
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); nav('hr-forgot-password'); }}
+            style={{ color: 'var(--text-link)', fontSize: 'var(--text-sm)', textAlign: 'center' }}
+          >
+            Forgot Password?
+          </a>
+
           <button
             onClick={() => nav('home')}
             style={{

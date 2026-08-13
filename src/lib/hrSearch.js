@@ -7,8 +7,8 @@ export async function searchHr(query) {
   if (q.length < 2) return { data: { jobs: [], applicants: [] } };
 
   const [jobsRes, appsRes] = await Promise.all([
-    supabase.from('job_postings').select('id, title, category, status').ilike('title', `%${q}%`).limit(5),
-    supabase.from('applications').select('id, full_name, job_id, job_postings(id, title)').ilike('full_name', `%${q}%`).limit(5),
+    supabase.from('job_postings').select('id, title, category, status, min_resume_match_percent').ilike('title', `%${q}%`).limit(5),
+    supabase.from('applications').select('id, full_name, job_id, job_postings(id, title, category, min_resume_match_percent)').ilike('full_name', `%${q}%`).limit(5),
   ]);
 
   return {

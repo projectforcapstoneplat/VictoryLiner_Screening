@@ -1,22 +1,20 @@
-// Reached only via the PASSWORD_RECOVERY auth event (see App.jsx), after the
-// applicant clicks the reset link from their email — Supabase Auth itself
-// enforces that this only works with a valid, unexpired recovery session.
-import { useState } from 'react';
+// Reached only via the PASSWORD_RECOVERY auth event (see App.jsx), after
+// either an applicant or HR staff clicks the reset link from their email —
+// Supabase Auth itself enforces that this only works with a valid,
+// unexpired recovery session. The recovery link carries no context about
+// which portal the request came from, so which "Sign In" to send them back
+// to is only knowable by checking the recovered session's own profile role.
+import { useEffect, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
-import { updatePassword } from '../lib/auth.js';
+import { RequirementRow } from '../components/core/RequirementRow/RequirementRow.jsx';
+import { supabase } from '../lib/supabaseClient.js';
+import { updatePassword, getProfile } from '../lib/auth.js';
 import { getPasswordChecklist, isPasswordValid } from '../lib/passwordRules.js';
 
-function RequirementRow({ passed, label }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', color: passed ? '#1a7f37' : 'var(--red-700)' }}>
-      <span aria-hidden style={{ fontWeight: 700 }}>{passed ? '✓' : '✗'}</span>
-      {label}
-    </div>
-  );
-}
+const HR_ROLES = ['hr_personnel', 'hr_head'];
 
 export function ResetPassword({ nav }) {
   const [password, setPassword] = useState('');
@@ -24,6 +22,20 @@ export function ResetPassword({ nav }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [isHr, setIsHr] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const userId = data.session?.user?.id;
+      if (!userId) return;
+      getProfile(userId).then(({ data: profile }) => {
+        if (profile && HR_ROLES.includes(profile.role)) setIsHr(true);
+      });
+    });
+  }, []);
+
+  const signInScreen = isHr ? 'hr-login' : 'signin';
+  const signInLabel = isHr ? 'Sign In to HR Portal' : 'Sign In';
 
   const passwordChecklist = getPasswordChecklist(password);
   const passwordValid = isPasswordValid(password);
@@ -52,7 +64,7 @@ export function ResetPassword({ nav }) {
           {done ? (
             <div style={{ width: '100%', maxWidth: 525, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <p style={{ fontSize: 'var(--text-sm)' }}>Your password has been updated.</p>
-              <Button variant="strong" size="lg" onClick={() => nav('signin')}>Sign In</Button>
+              <Button variant="strong" size="lg" onClick={() => nav(signInScreen)}>{signInLabel}</Button>
             </div>
           ) : (
             <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>

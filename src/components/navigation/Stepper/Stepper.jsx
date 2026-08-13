@@ -59,7 +59,13 @@ export function Stepper({ steps = ['Create an Account/ Sign In', 'My Information
   const centerPct = (i) => ((i + 0.5) / steps.length) * 100;
   const startPct = centerPct(0);
   const endPct = centerPct(steps.length - 1);
-  const busPct = centerPct(current);
+  // `current` can legitimately be passed as steps.length (one past the last
+  // index) to mean "every step is done" — MyApplications.jsx does this once
+  // HR has made a decision. Clamp just the bus's position so it parks on the
+  // last dot instead of overshooting off the end of the track; the
+  // checkmark logic below (`i < current`) already handles that case
+  // correctly on its own since it's a plain comparison, not an array index.
+  const busPct = centerPct(Math.min(current, steps.length - 1));
 
   return (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-ui)', paddingTop: 30 }}>
@@ -90,7 +96,7 @@ export function Stepper({ steps = ['Create an Account/ Sign In', 'My Information
       </div>
 
       {steps.map((label, i) => (
-        <div key={i} style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, flex: 1 }}>
+        <div key={i} style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
           {i < current ? (
             <span style={{
               width: 16, height: 16, borderRadius: '50%', background: 'var(--action-primary-bg)',

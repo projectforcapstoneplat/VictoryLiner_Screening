@@ -16,7 +16,7 @@ const corsHeaders = {
 };
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.6-flash';
 
 const EVALUATION_SCHEMA = {
   type: 'OBJECT',

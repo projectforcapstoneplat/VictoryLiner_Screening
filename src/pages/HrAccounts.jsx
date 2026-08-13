@@ -4,6 +4,80 @@ import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { listHrPersonnel, setHrPersonnelActive, createHrAccount } from '../lib/hrAccounts.js';
+import { listJobCategories, createJobCategory, deleteJobCategory } from '../lib/jobCategories.js';
+
+function JobCategoriesCard() {
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const reload = () => {
+    setLoading(true);
+    listJobCategories().then(({ data }) => {
+      setCategories(data);
+      setLoading(false);
+    });
+  };
+
+  useEffect(reload, []);
+
+  const handleAdd = async () => {
+    const name = draft.trim();
+    if (!name) return;
+    setError('');
+    setSaving(true);
+    const { error: createError } = await createJobCategory(name);
+    setSaving(false);
+    if (createError) {
+      setError(createError.code === '23505' ? 'That category already exists.' : createError.message);
+      return;
+    }
+    setDraft('');
+    reload();
+  };
+
+  const handleDelete = async (category) => {
+    // Existing job postings / interview question banks store the category
+    // as plain text, not a foreign key — deleting it here only removes it
+    // from the picker for *new* postings, it doesn't touch anything already
+    // using that category name. Worth flagging so HR Head isn't surprised.
+    if (!window.confirm(`Remove "${category.name}" from the category list? Job postings and interview questions already using it are unaffected — this only stops it from being picked for new ones.`)) return;
+    const { error: deleteError } = await deleteJobCategory(category.id);
+    if (deleteError) {
+      window.alert(`Could not remove category: ${deleteError.message}`);
+      return;
+    }
+    reload();
+  };
+
+  return (
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '30px 40px', marginBottom: 40, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <h2 style={{ fontSize: 'var(--text-lg)', margin: 0 }}>Job Categories</h2>
+      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0 }}>
+        Used for job posting categories and the interview question bank. Removing one here only affects future postings — it doesn&rsquo;t touch anything already using that category.
+      </p>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <Input label="New Category:" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="e.g. Fleet Planning" />
+        <Button variant="strong" size="sm" onClick={handleAdd} disabled={saving || !draft.trim()} style={{ alignSelf: 'flex-end' }}>{saving ? 'Adding…' : 'Add'}</Button>
+      </div>
+      {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
+      {loading ? (
+        <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>Loading categories…</p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {categories.map((c) => (
+            <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', padding: '6px 8px 6px 14px', borderRadius: 999, background: 'var(--surface-page-alt)' }}>
+              {c.name}
+              <span onClick={() => handleDelete(c)} title={`Remove ${c.name}`} style={{ cursor: 'pointer', color: 'var(--red-700)', fontWeight: 700, width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%' }}>×</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function HrAccounts({ nav, profile }) {
   const [accounts, setAccounts] = useState([]);
@@ -65,6 +139,8 @@ export function HrAccounts({ nav, profile }) {
             <Button variant="strong" size="sm" onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create Account'}</Button>
           </div>
         </div>
+
+        <JobCategoriesCard />
 
         {loading ? (
           <p>Loading accounts…</p>

@@ -95,48 +95,79 @@ export async function getMostRecentApplication(applicantId) {
 export async function listApplicationsForApplicant(applicantId) {
   const { data, error } = await supabase
     .from('applications')
-    .select('*, job_postings(title, category)')
+    .select('*, job_postings(title, category, min_resume_match_percent)')
     .eq('applicant_id', applicantId)
     .order('created_at', { ascending: false });
 
   return { data: data || [], error };
 }
 
-// HR Personnel's advance/decline decision (paper: "Advances or declines
-// candidates based on system-generated results") — HR Head can see the
+// HR Personnel's decision at either stage of the pipeline — first "submitted"
+// -> "interview_stage" (advance to interview) or "declined", then later
+// "interview_stage" -> "advanced" (final) or "declined". HR Head can see the
 // result via reports but never calls this itself. Also writes an audit-log
 // row recording who decided and when, kept separate from `status` itself so
 // the history survives regardless of what happens to the application later.
 //
-// The `.eq('status', 'submitted')` guard makes this an atomic compare-and-
-// swap: with multiple HR Personnel able to act on the same applicant, two
-// people could both load the page while it's still "submitted" and both
-// click a decision — without this guard, the second write would silently
-// overwrite the first with no indication anything was already decided.
-// Postgres applies the WHERE+SET as one operation, so there's no window for
-// both to succeed; the loser gets back the real current state instead.
+// Plain update, single HR Personnel account for now — no concurrency guard.
+// If multiple HR staff end up acting on the same applicant at once later,
+// revisit this with an atomic compare-and-swap (check the row's current
+// status as part of the update, not just by id) so a second write can't
+// silently overwrite the first.
 export async function updateApplicationStatus(applicationId, status, decidedBy) {
   const { data, error } = await supabase
     .from('applications')
     .update({ status })
     .eq('id', applicationId)
-    .eq('status', 'submitted')
     .select()
     .single();
 
-  if (error) {
-    if (error.code === 'PGRST116') {
-      const { data: current } = await supabase.from('applications').select('*').eq('id', applicationId).maybeSingle();
-      return {
-        data: current,
-        error: { code: 'ALREADY_DECIDED', message: `This application was already ${current?.status === 'declined' ? 'declined' : 'advanced'} by someone else.` },
-      };
-    }
-    return { data: null, error };
-  }
+  if (error) return { data: null, error };
 
   await supabase.from('application_decision_log').insert({ application_id: applicationId, decided_by: decidedBy, status });
   return { data, error: null };
+}
+
+// Best-effort — a failed/unconfigured email send never undoes the status
+// change that already happened (see supabase/functions/send-status-email).
+// Deliberately swallows all errors: this is a courtesy notification, not
+// something that should ever block or alarm HR mid-decision.
+export async function notifyApplicantStatusChange(applicationId, status) {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return;
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-status-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicationId, status }),
+    });
+  } catch {
+    // Notification is a courtesy, not a requirement — never surface this.
+  }
+}
+
+// Generates a fresh temporary password for a locked-out applicant — see
+// supabase/functions/reset-applicant-password for why this exists (the
+// default email sender can't reach real applicants yet). HR relays the
+// returned password to the applicant directly.
+export async function resetApplicantPassword(applicantId) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) return { error: { message: 'Not signed in.' } };
+
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reset-applicant-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicantId }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: { message: body.error || 'Failed to reset password.' } };
+    return { data: { password: body.password } };
+  } catch {
+    return { error: { message: 'Could not reach the password reset service. Check your connection and try again.' } };
+  }
 }
 
 // Reads the decision-audit trail for a set of applications — who advanced/

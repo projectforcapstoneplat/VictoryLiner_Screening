@@ -8,8 +8,9 @@ import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { KpiCard } from '../components/dashboard/KpiCard/KpiCard.jsx';
 import { PipelineBar } from '../components/dashboard/PipelineBar/PipelineBar.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
+import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getPersonnelOverview } from '../lib/reports.js';
-import { updateApplicationStatus } from '../lib/applications.js';
+import { updateApplicationStatus, notifyApplicantStatusChange } from '../lib/applications.js';
 import { getSignedVideoUrl } from '../lib/interviewEvaluation.js';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -22,6 +23,7 @@ const KPI_ICONS = {
 
 const STATUS_META = {
   submitted: { label: 'Awaiting Review', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' },
+  interview_stage: { label: 'Interview Stage', bg: '#fff4e0', fg: '#c98500' },
   advanced: { label: 'Advanced', bg: '#e3f6e6', fg: '#0ca30c' },
   declined: { label: 'Declined', bg: 'var(--pink-100)', fg: 'var(--red-700)' },
 };
@@ -39,9 +41,9 @@ function scoreTone(score) {
   return '#d03b3b';
 }
 
-function SectionCard({ title, subtitle, action, children, style }) {
+function SectionCard({ title, subtitle, action, children, style, delay = 0 }) {
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 28px', display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0, ...style }}>
+    <Reveal delay={delay} className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 28px', display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0, ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div>
           <strong style={{ fontSize: 'var(--text-lg)', fontFamily: 'var(--font-display)' }}>{title}</strong>
@@ -50,7 +52,7 @@ function SectionCard({ title, subtitle, action, children, style }) {
         {action}
       </div>
       {children}
-    </div>
+    </Reveal>
   );
 }
 
@@ -87,8 +89,10 @@ function ScreeningQueue({ queue, onDecide, profile }) {
     setDeciding(true);
     const { error } = await updateApplicationStatus(candidate.applicationId, status, profile?.id);
     setDeciding(false);
-    if (error?.code === 'ALREADY_DECIDED') {
-      window.alert(`${error.message}\n\nRemoving this applicant from your queue.`);
+    if (error) {
+      window.alert(`Could not update this application: ${error.message}`);
+    } else {
+      notifyApplicantStatusChange(candidate.applicationId, status);
     }
     onDecide(candidate.applicationId);
   };
@@ -97,7 +101,7 @@ function ScreeningQueue({ queue, onDecide, profile }) {
 
   return (
     <SectionCard title="Applicant Video Screening Queue" subtitle="Review and evaluate shortlisted candidates">
-      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 24 }}>
+      <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 24 }}>
         <div>
           <div style={{ position: 'relative', background: '#000', borderRadius: 12, overflow: 'hidden', aspectRatio: '16 / 9' }}>
             {answer?.response?.interview_questions?.question_text && (
@@ -154,7 +158,7 @@ function ScreeningQueue({ queue, onDecide, profile }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 'auto' }}>
             <Button variant="strong" size="sm" onClick={() => handleDecide('advanced')} disabled={deciding}>
-              {deciding ? 'Saving…' : '✓ Advance to Final Interview'}
+              {deciding ? 'Saving…' : '✓ Advance'}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => handleDecide('declined')} disabled={deciding}>✕ Decline</Button>
           </div>
@@ -233,28 +237,28 @@ export function HrPersonnelDashboard({ nav, profile }) {
   };
 
   return (
-    <HrShell active="hr-dashboard" nav={nav} profile={profile} notificationCount={report?.kpis.readyForDecision || 0}>
+    <HrShell active="hr-dashboard" nav={nav} profile={profile} notifications={report?.queue || []}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <div>
+        <Reveal>
           <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Dashboard</h1>
           <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>Welcome back, {profile?.full_name || profile?.email}.</p>
-        </div>
+        </Reveal>
 
         {error && <p style={{ color: 'var(--red-700)' }}>{error}</p>}
         {!report && !error && <p style={{ opacity: 0.7 }}>Loading dashboard…</p>}
 
         {report && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+            <div className="hr-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
               <KpiCard icon={KPI_ICONS.users} accent="red" label="Total Applicants" value={report.kpis.totalApplicants} trend={report.trends.totalApplicants} />
               <KpiCard icon={KPI_ICONS.video} accent="amber" label="Video Interviews Pending" value={report.kpis.videoPending} trend={null} />
               <KpiCard icon={KPI_ICONS.check} accent="green" label="Passed Initial Screening" value={report.kpis.passedScreening} trend={report.trends.passedScreening} />
               <KpiCard icon={KPI_ICONS.bolt} accent="violet" label="Ready for Your Decision" value={report.kpis.readyForDecision} trend={null} />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
+            <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
               <ScreeningQueue queue={report.queue} onDecide={handleDecide} profile={profile} />
-              <SectionCard title="Live Pipeline Stages" subtitle="Top job postings by applicant volume">
+              <SectionCard title="Live Pipeline Stages" subtitle="Top job postings by applicant volume" delay={0.06}>
                 {report.jobBreakdown.length === 0 ? (
                   <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications yet.</p>
                 ) : (

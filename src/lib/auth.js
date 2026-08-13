@@ -4,8 +4,25 @@ export async function signUpApplicant({ email, password, fullName }) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { role: 'applicant', full_name: fullName } },
+    options: {
+      data: { role: 'applicant', full_name: fullName },
+      emailRedirectTo: window.location.origin,
+    },
   });
+  if (error) return { data, error };
+
+  // Supabase deliberately returns success (no error) when the email already
+  // belongs to a confirmed account, so an attacker can't use the sign-up
+  // form to enumerate registered emails. The documented way to tell the two
+  // cases apart client-side is that no new identity is created for a repeat
+  // email, so `identities` comes back empty on the "already exists" path.
+  if (data?.user && data.user.identities?.length === 0) {
+    return {
+      data,
+      error: { code: 'EMAIL_TAKEN', message: 'An account with this email already exists. Try signing in instead.' },
+    };
+  }
+
   return { data, error };
 }
 

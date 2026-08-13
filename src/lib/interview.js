@@ -1,12 +1,15 @@
 import { supabase } from './supabaseClient.js';
 
-const QUESTIONS_PER_APPLICANT = 3;
+const DEFAULT_QUESTIONS_PER_APPLICANT = 3;
 
 // Ensures this application already has its interview questions assigned —
 // idempotent, so re-visiting the interview page never reshuffles an
 // in-progress or already-submitted interview. First visit picks the first
-// 3 (by creation order) questions from the job's category question bank.
-export async function ensureAssignedResponses(application, jobCategory) {
+// N (by creation order) questions from the job's category question bank —
+// N is HR Head's configured interview_question_count (see
+// src/lib/screeningSettings.js), passed in by the caller; falls back to 3
+// if not given so existing callers don't break.
+export async function ensureAssignedResponses(application, jobCategory, questionCount = DEFAULT_QUESTIONS_PER_APPLICANT) {
   const { data: existing, error: existingError } = await supabase
     .from('interview_responses')
     .select('*, interview_questions(question_text)')
@@ -33,7 +36,7 @@ export async function ensureAssignedResponses(application, jobCategory) {
     if (seenText.has(key)) continue;
     seenText.add(key);
     pool.push(q);
-    if (pool.length === QUESTIONS_PER_APPLICANT) break;
+    if (pool.length === questionCount) break;
   }
   if (!pool.length) return { data: [] };
 

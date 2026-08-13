@@ -87,23 +87,26 @@ const SECTION_ICONS = {
   note: <svg {...ICON_PROPS}><path d="M5 3h11l3 3v15H5z" /><path d="M9 9h6M9 13h6M9 17h3" /></svg>,
 };
 
-function SectionHeader({ icon, title }) {
+function SectionHeader({ icon, title, hint }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {icon && (
-        <span style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          {icon}
-        </span>
-      )}
-      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{title}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {icon && (
+          <span style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
+        <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{title}</span>
+      </div>
+      {hint && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65, marginLeft: icon ? 34 : 0 }}>{hint}</span>}
     </div>
   );
 }
 
-function RepeatableSection({ title, icon, delay, entries, fields, onChange, onAdd, onRemove, addLabel }) {
+function RepeatableSection({ title, icon, hint, delay, entries, fields, onChange, onAdd, onRemove, addLabel }) {
   return (
     <FadeSection delay={delay} style={SECTION_STYLE}>
-      <SectionHeader icon={icon} title={title} />
+      <SectionHeader icon={icon} title={title} hint={hint} />
       {entries.map((entry, i) => (
         <div key={i} style={ENTRY_STYLE}>
           {fields.map(({ key, label, type, placeholder }) => (
@@ -198,7 +201,6 @@ function TagInput({ label, values, onChange, placeholder, hint }) {
 export function ApplicationForm({ job, profile, nav }) {
   const j = job || { title: 'Bus Conductor' };
   const [checking, setChecking] = useState(true);
-  const [submittedApplication, setSubmittedApplication] = useState(null);
   const [fullName, setFullName] = useState(profile?.full_name || '');
   const [email, setEmail] = useState(profile?.email || '');
   const [phone, setPhone] = useState('');
@@ -307,7 +309,7 @@ export function ApplicationForm({ job, profile, nav }) {
       return;
     }
     setSubmitting(true);
-    const { data, error: submitError } = await submitApplication({
+    const { error: submitError } = await submitApplication({
       jobId: job.id,
       applicantId: profile.id,
       fullName,
@@ -332,10 +334,6 @@ export function ApplicationForm({ job, profile, nav }) {
       setError(submitError.message);
       return;
     }
-    // submitApplication doesn't join job_postings — the Interview screen
-    // needs job.category to pick the right question bank, so attach it here
-    // from the job we already have rather than re-querying.
-    setSubmittedApplication({ ...data, job_postings: { title: job.title, category: job.category } });
     setSubmitted(true);
   };
 
@@ -362,9 +360,9 @@ export function ApplicationForm({ job, profile, nav }) {
           {submitted ? (
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'center' }}>
               <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 8px' }}>Application Submitted</h2>
-              <p style={{ fontSize: 'var(--text-sm)' }}>Thanks for applying to {j.title}. Next, complete your video interview so HR can review your full application.</p>
-              <Button variant="strong" size="lg" onClick={() => nav('interview', submittedApplication)}>Continue to Video Interview</Button>
-              <Button variant="ghost" size="sm" onClick={() => nav('home')}>I'll do this later</Button>
+              <p style={{ fontSize: 'var(--text-sm)' }}>Thanks for applying to {j.title}. We'll review your resume next — check My Applications to see your status and when your video interview unlocks.</p>
+              <Button variant="strong" size="lg" onClick={() => nav('my-applications')}>View My Application</Button>
+              <Button variant="ghost" size="sm" onClick={() => nav('home')}>Back to Home</Button>
             </div>
           ) : (
             <>
@@ -393,6 +391,7 @@ export function ApplicationForm({ job, profile, nav }) {
 
                 <RepeatableSection
                   title="Work Experience"
+                  hint="Optional — leave this blank if you're a fresh graduate or don't have work experience yet. Just fill in Education below instead."
                   icon={SECTION_ICONS.experience}
                   delay={0.26}
                   entries={workExperience}

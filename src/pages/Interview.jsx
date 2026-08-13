@@ -1,11 +1,13 @@
-// Applicant — record video answers to the 3 questions assigned to this
-// application, one at a time, using the browser's camera + mic.
+// Applicant — record video answers to the questions assigned to this
+// application (count is HR Head-configurable, see screening_settings), one
+// at a time, using the browser's camera + mic.
 import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt } from '../lib/interview.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
+import { getScreeningSettings } from '../lib/screeningSettings.js';
 
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
@@ -486,13 +488,16 @@ export function Interview({ application, profile, nav }) {
   useEffect(() => {
     if (!application?.id) return;
     const category = application.job_postings?.category || '';
-    ensureAssignedResponses(application, category).then(({ data, error }) => {
-      if (error) {
-        setLoadError(`Could not load your interview questions: ${error.message || JSON.stringify(error)}`);
-        setResponses([]);
-        return;
-      }
-      setResponses(data);
+    getScreeningSettings().then(({ data: settings }) => {
+      const questionCount = settings?.interview_question_count;
+      ensureAssignedResponses(application, category, questionCount).then(({ data, error }) => {
+        if (error) {
+          setLoadError(`Could not load your interview questions: ${error.message || JSON.stringify(error)}`);
+          setResponses([]);
+          return;
+        }
+        setResponses(data);
+      });
     });
   }, [application]);
 
@@ -519,7 +524,7 @@ export function Interview({ application, profile, nav }) {
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
       <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
         <div onClick={() => nav('my-applications')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', marginBottom: 20 }}>&larr; Back to My Applications</div>
-        <div style={{ marginBottom: 40, padding: '0 40px' }}><Stepper current={3} /></div>
+        <div style={{ marginBottom: 40, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={3} /></div>
         <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>Video Interview — {application.job_postings?.title}</h1>
         <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>
           Each question stays hidden until you click Start. You'll get 5 seconds to prepare, then 1 minute to answer — you can re-record up to {MAX_ATTEMPTS} times per question, before or after submitting.

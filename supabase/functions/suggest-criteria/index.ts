@@ -14,7 +14,7 @@ const corsHeaders = {
 };
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.6-flash';
 
 // Gemini's schema format uses uppercase type names (its own Type enum, not
 // standard lowercase JSON Schema).

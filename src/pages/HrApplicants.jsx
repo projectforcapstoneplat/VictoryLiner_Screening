@@ -2,7 +2,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
-import { listApplicationsForJob, updateApplicationStatus, listDecisionLogForApplications } from '../lib/applications.js';
+import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
+import { listApplicationsForJob, updateApplicationStatus, listDecisionLogForApplications, resetApplicantPassword, notifyApplicantStatusChange } from '../lib/applications.js';
+import { listNotesForApplications, addNote, deleteNote } from '../lib/applicationNotes.js';
 import { computeYearsOfExperience } from '../lib/experience.js';
 import { listEvaluationsForJob, evaluateApplication } from '../lib/resumeEvaluation.js';
 import {
@@ -12,9 +14,11 @@ import {
   getSignedVideoUrl,
 } from '../lib/interviewEvaluation.js';
 import { buildCsv, downloadCsv } from '../lib/csvExport.js';
+import { getScreeningSettings } from '../lib/screeningSettings.js';
 
 const DECISION_META = {
   submitted: { label: 'Awaiting Review', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' },
+  interview_stage: { label: 'Interview Stage', bg: '#fff4e0', fg: '#c98500' },
   advanced: { label: 'Advanced', bg: '#e3f6e6', fg: '#0ca30c' },
   declined: { label: 'Declined', bg: 'var(--pink-100)', fg: 'var(--red-700)' },
 };
@@ -173,6 +177,107 @@ function InterviewSection({ responses, evaluations, evalStatus, evalErrors, onRe
   );
 }
 
+// Internal-only — never shown to the applicant. Free-text observations HR
+// staff leave for each other on a candidate (e.g. "called, no answer").
+function NotesSection({ notes, draft, onDraftChange, onAdd, onDelete, saving, currentUserId }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <strong style={{ fontSize: 'var(--text-sm)' }}>Internal Notes</strong>
+      <p style={{ fontSize: 'var(--text-xs)', opacity: 0.55, margin: '2px 0 8px' }}>Only visible to HR — never shown to the applicant.</p>
+      {notes.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+          {notes.map((n) => (
+            <div key={n.id} style={{ background: 'var(--surface-page-alt)', borderRadius: 8, padding: '8px 12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600 }}>{n.profiles?.full_name || n.profiles?.email || 'HR'}</span>
+                <span style={{ fontSize: 10, opacity: 0.55, flexShrink: 0 }}>{new Date(n.created_at).toLocaleString()}</span>
+              </div>
+              <p style={{ fontSize: 'var(--text-sm)', margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{n.note}</p>
+              {n.author_id === currentUserId && (
+                <div onClick={() => onDelete(n.id)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 10, marginTop: 4, display: 'inline-block' }}>
+                  Delete
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <textarea
+          value={draft}
+          onChange={(e) => onDraftChange(e.target.value)}
+          placeholder="Add a note for other HR staff…"
+          rows={2}
+          style={{
+            flex: 1, padding: '8px 10px', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', resize: 'vertical',
+            background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)', border: 'none', borderRadius: 6, color: 'var(--text-primary)',
+          }}
+        />
+        <Button variant="ghost" size="sm" onClick={onAdd} disabled={saving || !draft.trim()}>{saving ? 'Saving…' : 'Add'}</Button>
+      </div>
+    </div>
+  );
+}
+
+const COMPARE_ROW_STYLE = { padding: '10px 14px', borderTop: '1px solid var(--border-hairline)', fontSize: 'var(--text-sm)', verticalAlign: 'top' };
+
+// Side-by-side view for 2-3 candidates at once (see compareIds/toggleCompare
+// below) — reviewing full cards one at a time makes it easy to lose track
+// of how candidates stack up against each other on the same criteria.
+function ComparisonPanel({ candidates, onRemove, onClear }) {
+  return (
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 24px', marginBottom: 16, overflowX: 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <strong style={{ fontSize: 'var(--text-lg)', fontFamily: 'var(--font-display)' }}>Comparing {candidates.length} Candidates</strong>
+        <div onClick={onClear} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)' }}>Clear</div>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
+        <thead>
+          <tr>
+            <th style={{ ...COMPARE_ROW_STYLE, borderTop: 'none', textAlign: 'left', width: 140 }} />
+            {candidates.map((c) => (
+              <th key={c.application.id} style={{ ...COMPARE_ROW_STYLE, borderTop: 'none', textAlign: 'left' }}>
+                <div style={{ fontWeight: 700 }}>{c.application.full_name}</div>
+                <div onClick={() => onRemove(c.application.id)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 10, marginTop: 2 }}>Remove</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Resume Match</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{c.evaluation?.score != null ? `${c.evaluation.score}%` : '—'}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Interview Match</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{c.interviewScore != null ? `${c.interviewScore}%` : '—'}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Status</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{(DECISION_META[c.application.status] || DECISION_META.submitted).label}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Years Experience</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{computeYearsOfExperience(c.application.work_experience) ?? '—'}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Education</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{c.application.education_level || '—'}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Skills</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{c.application.skills?.length ? c.application.skills.join(', ') : '—'}</td>)}
+          </tr>
+          <tr>
+            <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Driver&rsquo;s License</td>
+            {candidates.map((c) => <td key={c.application.id} style={COMPARE_ROW_STYLE}>{c.application.drivers_license_type || '—'}</td>)}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ExperienceList({ items }) {
   if (!items?.length) return null;
   const totalYears = computeYearsOfExperience(items);
@@ -240,6 +345,7 @@ function CertificationList({ items }) {
 export function HrApplicants({ job, nav, profile }) {
   const [applications, setApplications] = useState([]);
   const [decidingId, setDecidingId] = useState(null);
+  const [resettingId, setResettingId] = useState(null);
   const [evaluations, setEvaluations] = useState({});
   const [evalStatus, setEvalStatus] = useState({});
   const [evalErrors, setEvalErrors] = useState({});
@@ -250,6 +356,53 @@ export function HrApplicants({ job, nav, profile }) {
   const [interviewEvalStatus, setInterviewEvalStatus] = useState({}); // responseId -> 'evaluating' | 'error'
   const [interviewEvalErrors, setInterviewEvalErrors] = useState({});
   const [decisionLog, setDecisionLog] = useState({}); // applicationId -> most recent decision log entry
+  const [notes, setNotes] = useState({}); // applicationId -> [note, ...] most-recent-first
+  const [noteDrafts, setNoteDrafts] = useState({}); // applicationId -> in-progress textarea value
+  const [savingNoteId, setSavingNoteId] = useState(null);
+  const [minResumeMatchPercent, setMinResumeMatchPercent] = useState(50);
+  // Collapsed by default — with a lot of applicants, always-expanded cards
+  // (skills, experience, AI assessment, interview answers, decide buttons)
+  // meant a huge amount of scrolling just to scan names and scores.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const toggleExpanded = (id) => setExpandedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Bulk decline — for closing out a posting without clicking Decline one
+  // card at a time. Deliberately decline-only: bulk-advancing is a much
+  // higher-stakes mistake to make at scale, so that stays a per-candidate
+  // decision. Works across a mix of 'submitted' and 'interview_stage'
+  // selections since each call uses that applicant's own current status.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkDeclining, setBulkDeclining] = useState(false);
+  const toggleSelected = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Separate from selectedIds (bulk-decline) — comparing candidates is a
+  // read-only, any-status, any-role action, not tied to making a decision.
+  // Capped at 3 so the side-by-side table stays readable.
+  const [compareIds, setCompareIds] = useState(() => new Set());
+  const toggleCompare = (id) => setCompareIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else if (next.size < 3) next.add(id);
+    return next;
+  });
+
+  useEffect(() => {
+    getScreeningSettings().then(({ data }) => {
+      if (data) setMinResumeMatchPercent(data.min_resume_match_percent);
+    });
+  }, []);
+
+  // This job posting can override the system-wide minimum with its own
+  // value (src/pages/JobPostingForm.jsx) — null means "use the default".
+  const effectiveMinPercent = job?.min_resume_match_percent ?? minResumeMatchPercent;
 
   useEffect(() => {
     if (!job?.id) return;
@@ -264,10 +417,11 @@ export function HrApplicants({ job, nav, profile }) {
       setEvaluations(map);
 
       const appIds = appsResult.data.map((a) => a.id);
-      const [responsesResult, interviewEvalResult, decisionLogResult] = await Promise.all([
+      const [responsesResult, interviewEvalResult, decisionLogResult, notesResult] = await Promise.all([
         listResponsesForApplications(appIds),
         listEvaluationsForApplications(appIds),
         listDecisionLogForApplications(appIds),
+        listNotesForApplications(appIds),
       ]);
       if (cancelled) return;
       const byApplication = {};
@@ -286,6 +440,12 @@ export function HrApplicants({ job, nav, profile }) {
         if (!decisionMap[d.application_id]) decisionMap[d.application_id] = d;
       }
       setDecisionLog(decisionMap);
+
+      const notesMap = {};
+      for (const n of notesResult.data) {
+        (notesMap[n.application_id] ||= []).push(n);
+      }
+      setNotes(notesMap);
 
       setLoading(false);
     })();
@@ -384,6 +544,30 @@ export function HrApplicants({ job, nav, profile }) {
     }
   }
 
+  async function handleAddNote(applicationId) {
+    const text = (noteDrafts[applicationId] || '').trim();
+    if (!text) return;
+    setSavingNoteId(applicationId);
+    const { data, error } = await addNote(applicationId, profile.id, text);
+    setSavingNoteId(null);
+    if (error) {
+      window.alert(`Could not save note: ${error.message}`);
+      return;
+    }
+    setNotes((n) => ({ ...n, [applicationId]: [data, ...(n[applicationId] || [])] }));
+    setNoteDrafts((d) => ({ ...d, [applicationId]: '' }));
+  }
+
+  async function handleDeleteNote(applicationId, noteId) {
+    if (!window.confirm('Delete this note?')) return;
+    const { error } = await deleteNote(noteId);
+    if (error) {
+      window.alert(`Could not delete note: ${error.message}`);
+      return;
+    }
+    setNotes((n) => ({ ...n, [applicationId]: (n[applicationId] || []).filter((note) => note.id !== noteId) }));
+  }
+
   function handleExportCsv() {
     const headers = [
       'Full Name', 'Email', 'Phone', 'Current Location', 'Applied On', 'Decision',
@@ -411,21 +595,63 @@ export function HrApplicants({ job, nav, profile }) {
     downloadCsv(`applicants-${safeJobTitle}-${new Date().toISOString().slice(0, 10)}.csv`, buildCsv(headers, rows));
   }
 
-  async function handleDecide(applicationId, status) {
+  async function handleResetPassword(applicantId, applicantName) {
+    if (!window.confirm(`Generate a new temporary password for ${applicantName}? Their old password will stop working immediately.`)) {
+      return;
+    }
+    setResettingId(applicantId);
+    const { data, error } = await resetApplicantPassword(applicantId);
+    setResettingId(null);
+    if (error) {
+      window.alert(`Could not reset password: ${error.message}`);
+      return;
+    }
+    window.alert(
+      `Temporary password for ${applicantName}:\n\n${data.password}\n\nShare this with them directly (phone, in person, etc.) — it won't be shown again. They can sign in with it right away.`,
+    );
+  }
+
+  async function handleDecide(applicationId, toStatus) {
     setDecidingId(applicationId);
-    const { data, error } = await updateApplicationStatus(applicationId, status, profile.id);
-    if (error?.code === 'ALREADY_DECIDED') {
-      window.alert(`${error.message}\n\nThis list will refresh to show the current status.`);
-      setApplications((apps) => apps.map((a) => (a.id === applicationId ? { ...a, status: data?.status || a.status } : a)));
+    const { error } = await updateApplicationStatus(applicationId, toStatus, profile.id);
+    if (error) {
+      window.alert(`Could not update this application: ${error.message}`);
       setDecidingId(null);
       return;
     }
-    setApplications((apps) => apps.map((a) => (a.id === applicationId ? { ...a, status } : a)));
+    setApplications((apps) => apps.map((a) => (a.id === applicationId ? { ...a, status: toStatus } : a)));
     setDecisionLog((log) => ({
       ...log,
-      [applicationId]: { status, decided_at: new Date().toISOString(), profiles: { full_name: profile.full_name, email: profile.email } },
+      [applicationId]: { status: toStatus, decided_at: new Date().toISOString(), profiles: { full_name: profile.full_name, email: profile.email } },
     }));
     setDecidingId(null);
+    notifyApplicantStatusChange(applicationId, toStatus);
+  }
+
+  async function handleBulkDecline() {
+    const targets = applications.filter((a) => selectedIds.has(a.id) && (a.status === 'submitted' || a.status === 'interview_stage'));
+    if (targets.length === 0) return;
+    if (!window.confirm(`Decline ${targets.length} selected applicant${targets.length === 1 ? '' : 's'}? This can't be bulk-undone.`)) return;
+    setBulkDeclining(true);
+    let failed = 0;
+    for (const a of targets) {
+      const { error } = await updateApplicationStatus(a.id, 'declined', profile.id);
+      if (error) {
+        failed += 1;
+        continue;
+      }
+      setApplications((apps) => apps.map((row) => (row.id === a.id ? { ...row, status: 'declined' } : row)));
+      setDecisionLog((log) => ({
+        ...log,
+        [a.id]: { status: 'declined', decided_at: new Date().toISOString(), profiles: { full_name: profile.full_name, email: profile.email } },
+      }));
+      notifyApplicantStatusChange(a.id, 'declined');
+    }
+    setBulkDeclining(false);
+    setSelectedIds(new Set());
+    if (failed > 0) {
+      window.alert(`${failed} applicant${failed === 1 ? '' : 's'} could not be updated.`);
+    }
   }
 
   // Ranked by resume match first — a preview of the full Candidate Ranking
@@ -466,6 +692,8 @@ export function HrApplicants({ job, nav, profile }) {
     [applications, evaluations, evalStatus, evalErrors, interviewResponses, interviewEvaluations, interviewEvalStatus],
   );
 
+  const compareCandidates = ranked.filter((c) => compareIds.has(c.application.id));
+
   if (!job) {
     return (
       <HrShell active="hr-jobs" nav={nav} profile={profile}>
@@ -484,23 +712,46 @@ export function HrApplicants({ job, nav, profile }) {
           <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginBottom: 22 }}>
             {applications.length} application{applications.length === 1 ? '' : 's'}
             {applications.length > 0 && ' · ranked by AI resume match against screening criteria'}
+            {' · '}{job.min_resume_match_percent != null
+              ? `${job.min_resume_match_percent}% minimum resume match for this role (custom)`
+              : `${effectiveMinPercent}% minimum resume match (system default)`}
           </p>
         </div>
         {applications.length > 0 && (
           <Button variant="ghost" size="sm" onClick={handleExportCsv}>Export CSV</Button>
         )}
       </div>
+      {profile?.role === 'hr_personnel' && selectedIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: 'var(--pink-100)', borderRadius: 10, padding: '10px 16px', marginBottom: 16 }}>
+          <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{selectedIds.size} selected</span>
+          <Button variant="ghost" size="sm" onClick={handleBulkDecline} disabled={bulkDeclining}>{bulkDeclining ? 'Declining…' : 'Decline Selected'}</Button>
+          <div onClick={() => setSelectedIds(new Set())} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)' }}>Clear</div>
+        </div>
+      )}
+      {compareCandidates.length >= 2 && (
+        <ComparisonPanel candidates={compareCandidates} onRemove={toggleCompare} onClear={() => setCompareIds(new Set())} />
+      )}
       {loading ? (
         <p>Loading applicants…</p>
       ) : applications.length === 0 ? (
         <p>No applications yet for this job.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {ranked.map(({ application: a, evaluation, status, errorMessage, interviewResponses: responses, interviewScore, interviewStatus }) => {
+          {ranked.map(({ application: a, evaluation, status, errorMessage, interviewResponses: responses, interviewScore, interviewStatus }, i) => {
             const decision = DECISION_META[a.status] || DECISION_META.submitted;
+            const expanded = expandedIds.has(a.id);
             return (
-              <div key={a.id} style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 28px', display: 'flex', gap: 24 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Reveal key={a.id} delay={Math.min(i * 0.05, 0.4)} className="hover-lift hr-applicant-card" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 28px', display: 'flex', gap: 24 }}>
+                {profile?.role === 'hr_personnel' && (a.status === 'submitted' || a.status === 'interview_stage') && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(a.id)}
+                    onChange={() => toggleSelected(a.id)}
+                    aria-label={`Select ${a.full_name}`}
+                    style={{ width: 18, height: 18, marginTop: 4, flexShrink: 0, cursor: 'pointer' }}
+                  />
+                )}
+                <div className="hr-applicant-card-scores" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <ScoreBadge score={evaluation?.score} status={status} label="Resume Match" />
                   <ScoreBadge score={interviewScore} status={interviewStatus} label="Interview Match" />
                 </div>
@@ -510,6 +761,28 @@ export function HrApplicants({ job, nav, profile }) {
                       <strong style={{ fontSize: 'var(--text-lg)' }}>{a.full_name}</strong>
                       <div style={{ fontSize: 'var(--text-sm)', opacity: 0.8 }}>{a.email} {a.phone ? `· ${a.phone}` : ''} {a.current_location ? `· ${a.current_location}` : ''}</div>
                       <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 4 }}>Applied {new Date(a.created_at).toLocaleDateString()}</div>
+                      <div style={{ display: 'flex', gap: 14, marginTop: 4 }}>
+                        <div
+                          onClick={() => !resettingId && handleResetPassword(a.applicant_id, a.full_name)}
+                          style={{ cursor: resettingId === a.applicant_id ? 'default' : 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', display: 'inline-block', opacity: resettingId === a.applicant_id ? 0.5 : 1 }}
+                        >
+                          {resettingId === a.applicant_id ? 'Resetting…' : 'Reset Password'}
+                        </div>
+                        <div
+                          onClick={() => toggleExpanded(a.id)}
+                          style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', display: 'inline-block' }}
+                        >
+                          {expanded ? '▲ Hide Details' : '▼ Show Details'}
+                        </div>
+                        {(compareIds.has(a.id) || compareIds.size < 3) && (
+                          <div
+                            onClick={() => toggleCompare(a.id)}
+                            style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', display: 'inline-block' }}
+                          >
+                            {compareIds.has(a.id) ? '✓ Comparing' : '+ Compare'}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: decision.bg, color: decision.fg, whiteSpace: 'nowrap' }}>
@@ -522,35 +795,82 @@ export function HrApplicants({ job, nav, profile }) {
                       )}
                     </div>
                   </div>
-                  {a.skills?.length > 0 && (
-                    <div style={{ fontSize: 'var(--text-sm)', marginTop: 12 }}><strong>Skills:</strong> {a.skills.join(', ')}</div>
-                  )}
-                  <DrivingInfo application={a} />
-                  <ExperienceList items={a.work_experience} />
-                  <EducationList items={a.education} level={a.education_level} />
-                  <CertificationList items={a.certifications} />
-                  {a.cover_note && (
-                    <div style={{ marginTop: 12 }}>
-                      <strong style={{ fontSize: 'var(--text-sm)' }}>Cover Note</strong>
-                      <p style={{ fontSize: 'var(--text-sm)', lineHeight: 1.6, marginTop: 6 }}>{a.cover_note}</p>
-                    </div>
-                  )}
-                  <AiAssessment evaluation={evaluation} status={status} errorMessage={errorMessage} onRetry={() => handleRetry(a.id)} />
-                  <InterviewSection
-                    responses={responses}
-                    evaluations={interviewEvaluations}
-                    evalStatus={interviewEvalStatus}
-                    evalErrors={interviewEvalErrors}
-                    onRetry={handleRetryInterview}
-                  />
-                  {a.status === 'submitted' && profile?.role === 'hr_personnel' && (
-                    <div style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
-                      <Button variant="strong" size="sm" onClick={() => handleDecide(a.id, 'advanced')} disabled={decidingId === a.id}>Advance</Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDecide(a.id, 'declined')} disabled={decidingId === a.id}>Decline</Button>
-                    </div>
+                  {expanded && (
+                    <>
+                      {a.skills?.length > 0 && (
+                        <div style={{ fontSize: 'var(--text-sm)', marginTop: 12 }}><strong>Skills:</strong> {a.skills.join(', ')}</div>
+                      )}
+                      <DrivingInfo application={a} />
+                      <ExperienceList items={a.work_experience} />
+                      <EducationList items={a.education} level={a.education_level} />
+                      <CertificationList items={a.certifications} />
+                      {a.cover_note && (
+                        <div style={{ marginTop: 12 }}>
+                          <strong style={{ fontSize: 'var(--text-sm)' }}>Cover Note</strong>
+                          <p style={{ fontSize: 'var(--text-sm)', lineHeight: 1.6, marginTop: 6 }}>{a.cover_note}</p>
+                        </div>
+                      )}
+                      <AiAssessment evaluation={evaluation} status={status} errorMessage={errorMessage} onRetry={() => handleRetry(a.id)} />
+                      <InterviewSection
+                        responses={responses}
+                        evaluations={interviewEvaluations}
+                        evalStatus={interviewEvalStatus}
+                        evalErrors={interviewEvalErrors}
+                        onRetry={handleRetryInterview}
+                      />
+                      <NotesSection
+                        notes={notes[a.id] || []}
+                        draft={noteDrafts[a.id] || ''}
+                        onDraftChange={(text) => setNoteDrafts((d) => ({ ...d, [a.id]: text }))}
+                        onAdd={() => handleAddNote(a.id)}
+                        onDelete={(noteId) => handleDeleteNote(a.id, noteId)}
+                        saving={savingNoteId === a.id}
+                        currentUserId={profile.id}
+                      />
+                      {a.status === 'submitted' && profile?.role === 'hr_personnel' && (
+                        <div style={{ marginTop: 16, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
+                          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 10px' }}>
+                            Advancing unlocks the video interview for this applicant — it still also needs their resume score to reach {effectiveMinPercent}%
+                            {evaluation?.score != null ? ` (currently ${evaluation.score}%)` : ' (not scored yet)'}.
+                          </p>
+                          <div style={{ display: 'flex', gap: 10 }}>
+                            <Button variant="strong" size="sm" onClick={() => handleDecide(a.id, 'interview_stage')} disabled={decidingId === a.id}>Advance to Interview</Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDecide(a.id, 'declined')} disabled={decidingId === a.id}>Decline</Button>
+                          </div>
+                        </div>
+                      )}
+                      {a.status === 'interview_stage' && profile?.role === 'hr_personnel' && (
+                        <div style={{ marginTop: 16, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
+                          {interviewStatus !== 'done' && (
+                            <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 10px' }}>
+                              Video interview isn&rsquo;t fully evaluated yet — you can still decide now if you&rsquo;ve seen enough.
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: 10 }}>
+                            <Button variant="strong" size="sm" onClick={() => handleDecide(a.id, 'advanced')} disabled={decidingId === a.id}>Advance</Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDecide(a.id, 'declined')} disabled={decidingId === a.id}>Decline</Button>
+                          </div>
+                        </div>
+                      )}
+                      {(a.status === 'advanced' || a.status === 'declined') && profile?.role === 'hr_personnel' && (
+                        <div style={{ marginTop: 16, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
+                          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 10px' }}>
+                            Made this call by mistake? Reopening resets them to &ldquo;Awaiting Review&rdquo; for reconsideration from scratch.
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => window.confirm(`Reopen ${a.full_name}'s application? It will go back to "Awaiting Review".`) && handleDecide(a.id, 'submitted')}
+                            disabled={decidingId === a.id}
+                          >
+                            Reopen
+                          </Button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
-              </div>
+              </Reveal>
             );
           })}
         </div>

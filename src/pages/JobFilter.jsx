@@ -8,7 +8,7 @@ import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Pagination } from '../components/navigation/Pagination/Pagination.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
-import { JOB_CATEGORIES } from '../lib/jobCategories.js';
+import { listJobCategories } from '../lib/jobCategories.js';
 import { listPublishedJobs } from '../lib/jobs.js';
 import { deadlineInfo } from '../lib/deadline.js';
 import searchIconOutline from '../assets/search-icon-outline.svg';
@@ -50,11 +50,11 @@ function JobResultCard({ index, job, onView, onApply }) {
       }}
       onClick={onView}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className="job-card-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
           <CategoryIcon category={job.category} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 'var(--text-xl)', color: 'var(--text-primary)' }}>{job.title}</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="job-card-title" style={{ fontWeight: 700, fontSize: 'var(--text-xl)', color: 'var(--text-primary)' }}>{job.title}</div>
             <div style={{ fontSize: 'var(--text-xs)', opacity: 0.65, marginTop: 4 }}>
               {[job.category, job.location, job.employment_type].filter(Boolean).join(' · ')}
             </div>
@@ -128,6 +128,7 @@ export function JobFilter({ nav }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(ALL_CATEGORIES);
+  const [categories, setCategories] = useState([]);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -135,6 +136,7 @@ export function JobFilter({ nav }) {
       setJobs(data);
       setLoading(false);
     });
+    listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
   }, []);
 
   const filteredJobs = useMemo(() => {
@@ -189,7 +191,7 @@ export function JobFilter({ nav }) {
 
         <div className="fade-in-up" style={{ animationDelay: '0.14s', display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, marginBottom: 30 }}>
           <CategoryChip category={ALL_CATEGORIES} active={category === ALL_CATEGORIES} onClick={() => setCategory(ALL_CATEGORIES)} />
-          {JOB_CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <CategoryChip key={c} category={c} active={category === c} onClick={() => setCategory(c)} />
           ))}
         </div>
@@ -203,7 +205,7 @@ export function JobFilter({ nav }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {pagedJobs.map((j, i) => (
-              <JobResultCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('signin', j)} />
+              <JobResultCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('apply', j)} />
             ))}
           </div>
         )}

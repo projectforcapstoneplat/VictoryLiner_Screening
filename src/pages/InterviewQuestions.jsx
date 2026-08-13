@@ -11,7 +11,7 @@ import {
   deleteQuestion,
   suggestQuestions,
 } from '../lib/interviewQuestions.js';
-import { JOB_CATEGORIES } from '../lib/jobCategories.js';
+import { listJobCategories } from '../lib/jobCategories.js';
 
 function QuestionRow({ question, onSave, onDelete }) {
   const [text, setText] = useState(question.question_text);
@@ -58,6 +58,7 @@ function DraftRow({ text: initialText, onAdd, onDiscard }) {
 
 export function InterviewQuestions({ profile, nav }) {
   const [category, setCategory] = useState('');
+  const [categories, setCategories] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [newQuestionText, setNewQuestionText] = useState('');
@@ -77,6 +78,10 @@ export function InterviewQuestions({ profile, nav }) {
     setQuestions(data);
     setLoading(false);
   };
+
+  useEffect(() => {
+    listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
+  }, []);
 
   useEffect(() => {
     setDrafts([]);
@@ -161,7 +166,7 @@ export function InterviewQuestions({ profile, nav }) {
         </p>
         <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '40px 50px', display: 'flex', flexDirection: 'column', gap: 20 }}>
           <div style={{ maxWidth: 360 }}>
-            <Select label="Category:" value={category} onChange={(e) => setCategory(e.target.value)} options={JOB_CATEGORIES} placeholder="Select a category" />
+            <Select label="Category:" value={category} onChange={(e) => setCategory(e.target.value)} options={categories} placeholder="Select a category" />
           </div>
 
           {category.trim() && (
