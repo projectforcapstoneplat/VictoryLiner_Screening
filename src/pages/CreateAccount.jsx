@@ -6,9 +6,11 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { RequirementRow } from '../components/core/RequirementRow/RequirementRow.jsx';
+import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { signUpApplicant } from '../lib/auth.js';
 import { getPasswordChecklist, isPasswordValid } from '../lib/passwordRules.js';
 import { isValidEmailFormat, isDisposableEmail } from '../lib/emailRules.js';
+import { friendlyAuthError } from '../lib/authErrors.js';
 
 export function CreateAccount({ job, nav }) {
   const j = job || { title: 'Bus Conductor' };
@@ -55,7 +57,7 @@ export function CreateAccount({ job, nav }) {
     const { data, error: signUpError } = await signUpApplicant({ email, password });
     setLoading(false);
     if (signUpError) {
-      setError(signUpError.message);
+      setError(friendlyAuthError(signUpError.message));
       setEmailTaken(signUpError.code === 'EMAIL_TAKEN');
       return;
     }
@@ -70,15 +72,19 @@ export function CreateAccount({ job, nav }) {
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
-        <div onClick={() => nav('signin', j)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Sign In</div>
-        <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, marginBottom: 30 }}>{j.title}</div>
-        <div style={{ marginBottom: 50, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={0} /></div>
-        <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }} className="auth-card">
+        <div onClick={() => nav('signin', job)} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>&larr; Back to Sign In</div>
+        {job && (
+          <>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, marginBottom: 30 }}>{j.title}</div>
+            <div style={{ marginBottom: 50, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={0} /></div>
+          </>
+        )}
+        <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: job ? '0 auto' : '40px auto 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }} className="auth-card">
           <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 20px' }}>Create An Account</h2>
           {confirmationSent ? (
             <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'center' }}>
               <p style={{ fontSize: 'var(--text-sm)' }}>We sent a confirmation link to <strong>{email}</strong>. Confirm your email, then sign in.</p>
-              <Button variant="strong" size="lg" onClick={() => nav('signin', j)}>Go to Sign In</Button>
+              <Button variant="strong" size="lg" onClick={() => nav('signin', job)}>Go to Sign In</Button>
             </div>
           ) : (
             <div style={{ width: '100%', maxWidth: 525, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -121,16 +127,14 @@ export function CreateAccount({ job, nav }) {
                 </label>
               </div>
               <p style={{ fontSize: 'var(--text-sm)', margin: 0 }}>By clicking the "Create Account" button, you are agreeing to our Recruiting Data Privacy Notice.</p>
-              {error && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 'var(--text-sm)' }}>
-                  <span style={{ color: 'var(--red-700)' }}>{error}</span>
-                  {emailTaken && (
-                    <a href="#" onClick={(e) => { e.preventDefault(); nav('signin', j); }} style={{ color: 'var(--text-link)', fontWeight: 600 }}>
-                      Sign In &rarr;
-                    </a>
-                  )}
-                </div>
-              )}
+              <FormError
+                message={error}
+                action={emailTaken && (
+                  <a href="#" onClick={(e) => { e.preventDefault(); nav('signin', job); }} style={{ color: 'var(--red-700)', fontWeight: 700, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                    Sign In &rarr;
+                  </a>
+                )}
+              />
               <Button variant="strong" size="lg" onClick={handleCreateAccount} disabled={loading || !canSubmit}>{loading ? 'Creating Account…' : 'Create Account'}</Button>
             </div>
           )}

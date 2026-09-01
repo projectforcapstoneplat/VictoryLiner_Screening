@@ -134,6 +134,20 @@ a {
   100% { transform: translate(-16px, -12px) scale(1.7); opacity: 0; }
 }
 
+/* FormError (src/components/feedback/FormError) — drops in, then settles
+   with a small shake, so a rejected sign-in/sign-up actually draws the eye
+   instead of reading as a quiet line of red text. One combined keyframe
+   (rather than two separate `transform`-animating classes) since a second
+   animation on the same property would just override the first, not blend. */
+@keyframes formErrorIn {
+  0% { opacity: 0; transform: translateY(-6px); }
+  40% { opacity: 1; transform: translateY(0) translateX(0); }
+  55% { transform: translateY(0) translateX(-4px); }
+  70% { transform: translateY(0) translateX(4px); }
+  85% { transform: translateY(0) translateX(-2px); }
+  100% { transform: translateY(0) translateX(0); }
+}
+
 /* Stepper's driving bus (see src/components/navigation/Stepper) — position is
    animated inline via `left`; these add the idle "engine running" motion so
    it reads as alive even while parked at the current step. */
@@ -190,6 +204,10 @@ a {
 
 .fade-in-up {
   animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.form-error {
+  animation: formErrorIn 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 /* Scroll-triggered reveal (see src/components/motion/Reveal) — starts hidden,
@@ -254,7 +272,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom {
+  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom, .form-error {
     animation: none !important;
     transition: none !important;
   }

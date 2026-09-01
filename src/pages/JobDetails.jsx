@@ -1,12 +1,14 @@
 // Careers job detail page — was a flat, unstyled list of headings and
 // paragraphs with no cards, icons, or motion. Rebuilt as a two-column layout
 // (content + sticky apply card) matching the rest of the redesigned site.
+import { useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Breadcrumb } from '../components/navigation/Breadcrumb/Breadcrumb.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
 import { deadlineInfo } from '../lib/deadline.js';
+import { quickApply } from '../lib/quickApply.js';
 
 // Standard disclosures shown on every job posting — not something HR writes per job.
 const STATIC_SECTIONS = [
@@ -47,15 +49,41 @@ function MetaRow({ icon, label }) {
   );
 }
 
-export function JobDetails({ job, nav }) {
+export function JobDetails({ job, nav, profile }) {
   const j = job || { title: 'Bus Conductor', category: 'Operations' };
+  const [applying, setApplying] = useState(false);
   const sections = [
     { h: 'Required Qualifications', icon: 'required', body: j.required_qualifications },
     { h: 'Preferred Qualifications', icon: 'preferred', body: j.preferred_qualifications },
   ].filter((s) => s.body);
   const deadline = deadlineInfo(j.application_deadline);
   const canApply = !deadline?.closed;
-  const handleApply = () => canApply && nav('apply', j);
+
+  // If the AI already matched this applicant's resume against this exact
+  // job (see JobMatches.jsx), reuse that instead of the usual resume-entry
+  // form — quickApply() handles reusing the score and only unlocking the
+  // interview immediately when it genuinely clears the threshold. Anyone
+  // without a matching resume on file (not signed in, HR, no match yet,
+  // etc.) falls back to the normal apply flow exactly as before.
+  const handleApply = async () => {
+    if (!canApply) return;
+    if (!profile || profile.role !== 'applicant') {
+      nav('apply', j);
+      return;
+    }
+    setApplying(true);
+    const { data: application, error } = await quickApply(j.id);
+    setApplying(false);
+    if (error) {
+      nav('apply', j);
+      return;
+    }
+    if (application.status === 'interview_stage') {
+      nav('interview', application);
+      return;
+    }
+    nav('my-applications');
+  };
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
@@ -119,10 +147,10 @@ export function JobDetails({ job, nav }) {
                 )}
               </div>
               <Button
-                variant="primary" size="md" disabled={!canApply} onClick={handleApply}
+                variant="primary" size="md" disabled={!canApply || applying} onClick={handleApply}
                 style={!canApply ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
               >
-                {canApply ? 'Apply Now' : 'Applications Closed'}
+                {!canApply ? 'Applications Closed' : applying ? 'Applying…' : 'Apply Now'}
               </Button>
             </div>
           </div>

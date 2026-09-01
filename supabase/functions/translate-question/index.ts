@@ -5,6 +5,7 @@
 // applicants are the ones using it from the Interview screen.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
+import { callGemini } from '../_shared/gemini.ts';
 
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
@@ -31,7 +32,6 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')!;
 
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
@@ -53,21 +53,16 @@ Deno.serve(async (req) => {
       return json({ error: 'Text is required.' }, 400);
     }
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: text.trim() }] }],
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        }),
-      },
-    );
-
-    const geminiBody = await geminiRes.json();
-    if (!geminiRes.ok) {
-      return json({ error: geminiBody.error?.message || 'Gemini request failed.' }, 502);
+    const { ok: geminiOk, status: geminiStatus, body: geminiBody } = await callGemini(GEMINI_MODEL, {
+      contents: [{ parts: [{ text: text.trim() }] }],
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    });
+    if (!geminiOk) {
+      const status = geminiStatus === 429 ? 429 : 502;
+      const message = geminiStatus === 429
+        ? 'All configured Gemini API keys are currently rate-limited. Try again shortly.'
+        : geminiBody.error?.message || 'Gemini request failed.';
+      return json({ error: message }, status);
     }
 
     const candidate = geminiBody.candidates?.[0];

@@ -1,6 +1,7 @@
 // figma reference: "header" glass pill nav, present on every frame
 import React, { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../../lib/ThemeContext.jsx';
+import { signOut } from '../../../lib/auth.js';
 
 function HamburgerIcon({ open }) {
   return (
@@ -87,13 +88,69 @@ function NavLink({ l, stacked, onNavigate }) {
   );
 }
 
-export function Header({ links, onLogoClick, compact = false, nav, accessory }) {
+// Signed-in indicator — an avatar-initial chip + icon-only sign-out button,
+// sitting inside the header pill itself (via the `accessory` slot) rather
+// than as a separate plain-text row floating underneath it.
+function AccountChip({ profile, onSignOut }) {
+  const name = profile.full_name || profile.email || 'Account';
+  const initial = name.trim().charAt(0).toUpperCase();
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-card)',
+      borderRadius: 999, padding: '5px 6px 5px 5px', boxShadow: 'var(--shadow-hairline)',
+    }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: '50%', background: 'var(--action-primary-bg)', color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 'var(--text-xs)', flexShrink: 0,
+      }}>
+        {initial}
+      </div>
+      <span style={{
+        fontSize: 'var(--text-xs)', fontWeight: 600, maxWidth: 140, overflow: 'hidden',
+        textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)',
+      }}>
+        {name}
+      </span>
+      <button
+        onClick={onSignOut}
+        title="Sign Out"
+        aria-label="Sign Out"
+        style={{
+          width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer', flexShrink: 0,
+          background: 'var(--surface-page-alt)', color: 'var(--action-primary-bg)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+// `profile` is the one prop most pages already have in scope, so passing it
+// gets a working sign-out for free without each page having to build its own
+// chip + handler — a page can still override with a fully custom `accessory`
+// instead. Without this, a gated screen with no other nav escape (e.g.
+// ResumeForm.jsx, which bounces an incomplete resume straight back to itself)
+// would have no way to sign out at all.
+export function Header({ links, onLogoClick, compact = false, nav, accessory, profile }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef(null);
   const resolvedLinks = links ?? [
     { label: 'Contact Us', onClick: nav ? () => nav('contact') : undefined },
     { label: 'About Us', onClick: nav ? () => nav('home', null, { scrollTo: 'about' }) : undefined },
   ];
+
+  // Same ordering fix as HrShell's UserMenu: nav first, then signOut(), so a
+  // gated screen doesn't re-render mid-signOut against an already-null
+  // session before `screen` has caught up.
+  const handleSignOut = () => {
+    nav?.('home');
+    signOut();
+  };
+  const resolvedAccessory = accessory ?? (profile ? <AccountChip profile={profile} onSignOut={handleSignOut} /> : null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -128,14 +185,14 @@ export function Header({ links, onLogoClick, compact = false, nav, accessory }) 
       <nav className="app-header-nav" style={{ display: 'flex', alignItems: 'center', gap: 36, fontFamily: 'var(--font-ui)', fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
         {resolvedLinks.map((l) => <NavLink key={typeof l === 'string' ? l : l.label} l={l} />)}
         <ThemeToggle />
-        {accessory}
+        {resolvedAccessory}
       </nav>
 
       {/* Mobile — theme toggle/account chip stay visible; links collapse
           behind the hamburger instead of wrapping into a cramped grid. */}
       <div className="app-header-mobile-controls" style={{ display: 'none', alignItems: 'center', gap: 10 }}>
         <ThemeToggle />
-        {accessory}
+        {resolvedAccessory}
         <button
           type="button"
           onClick={() => setMenuOpen((o) => !o)}

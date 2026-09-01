@@ -5,7 +5,9 @@ import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
+import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { requestPasswordReset } from '../lib/auth.js';
+import { friendlyAuthError } from '../lib/authErrors.js';
 
 export function ForgotPassword({ nav, variant = 'applicant' }) {
   const [email, setEmail] = useState('');
@@ -25,7 +27,7 @@ export function ForgotPassword({ nav, variant = 'applicant' }) {
     const { error: resetError } = await requestPasswordReset(email.trim());
     setLoading(false);
     if (resetError) {
-      setError(resetError.message);
+      setError(friendlyAuthError(resetError.message));
       return;
     }
     setSent(true);
@@ -51,7 +53,7 @@ export function ForgotPassword({ nav, variant = 'applicant' }) {
                 Enter the email address on your account and we'll send you a link to reset your password.
               </p>
               <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
+              <FormError message={error} />
               <Button variant="strong" size="lg" onClick={handleSubmit} disabled={loading}>{loading ? 'Sending…' : 'Send Reset Link'}</Button>
             </div>
           )}

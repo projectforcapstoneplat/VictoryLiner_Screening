@@ -31,6 +31,26 @@ export async function signInWithPassword({ email, password }) {
   return { data, error };
 }
 
+// Google is a full-page redirect away to accounts.google.com and back — the
+// only survivor across that round trip is the URL, since it isn't a page
+// reload of the SPA's own in-memory state (unlike email/password, which
+// never navigates away). `screen`/`jobId` get baked into the redirect URL
+// so App.jsx's post-redirect effect can resume exactly where the user
+// clicked "Sign in with Google" instead of always landing on the homepage.
+// A new Google account gets a `profiles` row automatically (see the
+// `handle_new_user` trigger in 0001_init.sql), defaulting to the
+// 'applicant' role — this only ever signs applicants in/up, never HR.
+export async function signInWithGoogle({ screen, jobId } = {}) {
+  const url = new URL(window.location.origin + window.location.pathname);
+  if (screen) url.searchParams.set('screen', screen);
+  if (jobId) url.searchParams.set('job', jobId);
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: url.toString() },
+  });
+  return { error };
+}
+
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   return { error };

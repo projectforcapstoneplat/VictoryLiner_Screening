@@ -9,7 +9,6 @@ import { listPublishedJobs } from '../lib/jobs.js';
 import { useInView } from '../lib/useInView.js';
 import { useCountUp } from '../lib/useCountUp.js';
 import { listJobCategories } from '../lib/jobCategories.js';
-import { signOut } from '../lib/auth.js';
 import heroBase from '../assets/hero-bus-base.jpg';
 import searchIconOutline from '../assets/search-icon-outline.svg';
 
@@ -185,47 +184,6 @@ function AboutSection() {
   );
 }
 
-// Signed-in indicator — an avatar-initial chip + icon-only sign-out button,
-// sitting inside the header pill itself (via Header's `accessory` slot)
-// rather than as a separate plain-text row floating underneath it.
-function AccountChip({ profile, onSignOut }) {
-  const name = profile.full_name || profile.email || 'Account';
-  const initial = name.trim().charAt(0).toUpperCase();
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-card)',
-      borderRadius: 999, padding: '5px 6px 5px 5px', boxShadow: 'var(--shadow-hairline)',
-    }}>
-      <div style={{
-        width: 28, height: 28, borderRadius: '50%', background: 'var(--action-primary-bg)', color: '#fff',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 'var(--text-xs)', flexShrink: 0,
-      }}>
-        {initial}
-      </div>
-      <span style={{
-        fontSize: 'var(--text-xs)', fontWeight: 600, maxWidth: 140, overflow: 'hidden',
-        textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)',
-      }}>
-        {name}
-      </span>
-      <button
-        onClick={onSignOut}
-        title="Sign Out"
-        aria-label="Sign Out"
-        style={{
-          width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer', flexShrink: 0,
-          background: 'var(--surface-page-alt)', color: 'var(--action-primary-bg)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-      </button>
-    </div>
-  );
-}
-
 // Continuously auto-scrolling strip of every job category — the list is
 // duplicated back-to-back and the track animates exactly -50% so the loop is
 // seamless. Gives the page a bit of motion that doesn't depend on the user
@@ -294,14 +252,6 @@ export function Homepage({ nav, profile, scrollTarget }) {
     return () => clearTimeout(id);
   }, [scrollTarget]);
 
-  // Same ordering fix as HrShell.jsx's handleSignOut — nav first, then
-  // signOut(), so a gated screen never re-renders mid-signOut against an
-  // already-null session while `screen` hasn't caught up yet.
-  const handleSignOut = () => {
-    nav('home');
-    signOut();
-  };
-
   const [connectorRef, connectorInView] = useInView({ threshold: 0.4 });
 
   const navLinks = [
@@ -326,7 +276,8 @@ export function Homepage({ nav, profile, scrollTarget }) {
           links={navLinks}
           onLogoClick={() => nav('home')}
           compact={scrolled}
-          accessory={profile ? <AccountChip profile={profile} onSignOut={handleSignOut} /> : null}
+          nav={nav}
+          profile={profile}
         />
       </div>
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { listAllJobs, deleteJob, setJobStatus } from '../lib/jobs.js';
+import { matchJobToAllResumes } from '../lib/resumeMatches.js';
 
 const STATUS_META = {
   draft: { label: 'Draft', color: 'var(--gray-500)' },
@@ -33,6 +34,10 @@ export function HrDashboard({ nav, profile }) {
   const handleStatus = async (job, status) => {
     await setJobStatus(job.id, status);
     reload();
+    // Fire-and-forget — scoring every applicant's resume against this one
+    // job can take a while, and there's nothing on this screen for HR to
+    // wait on; it happens in the background while they keep working.
+    if (status === 'published') matchJobToAllResumes(job.id);
   };
 
   return (

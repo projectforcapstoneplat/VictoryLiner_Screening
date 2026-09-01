@@ -8,7 +8,9 @@ import { useState } from 'react';
 import { ThemeToggle } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
+import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { signInWithPassword, signOut, getProfile } from '../lib/auth.js';
+import { friendlyAuthError } from '../lib/authErrors.js';
 
 function LockIcon() {
   return (
@@ -31,7 +33,7 @@ export function HrLogin({ nav }) {
     const { data, error: signInError } = await signInWithPassword({ email, password });
     if (signInError) {
       setLoading(false);
-      setError(signInError.message);
+      setError(friendlyAuthError(signInError.message));
       return;
     }
     const { data: profile } = await getProfile(data.user.id);
@@ -84,11 +86,7 @@ export function HrLogin({ nav }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} onKeyDown={handleKeyDown}>
             <Input label="Email Address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
             <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-            {error && (
-              <div style={{ background: 'var(--pink-100)', color: 'var(--red-700)', fontSize: 'var(--text-sm)', padding: '10px 14px', borderRadius: 10 }}>
-                {error}
-              </div>
-            )}
+            <FormError message={error} />
             <Button variant="strong" size="lg" onClick={handleSignIn} disabled={loading}>{loading ? 'Signing In…' : 'Sign In'}</Button>
           </div>
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './lib/supabaseClient.js';
 import { getProfile, signOut } from './lib/auth.js';
+import { getJob } from './lib/jobs.js';
+import { getMyResume } from './lib/applicantResume.js';
 import { LoadingScreen } from './components/feedback/LoadingScreen/LoadingScreen.jsx';
 import { Homepage } from './pages/Homepage.jsx';
 import { JobFilter } from './pages/JobFilter.jsx';
@@ -14,6 +16,8 @@ import { ForgotPassword } from './pages/ForgotPassword.jsx';
 import { ResetPassword } from './pages/ResetPassword.jsx';
 import { CreateAccount } from './pages/CreateAccount.jsx';
 import { ApplicationForm } from './pages/ApplicationForm.jsx';
+import { ResumeForm } from './pages/ResumeForm.jsx';
+import { JobMatches } from './pages/JobMatches.jsx';
 import { HrLogin } from './pages/HrLogin.jsx';
 import { HrDashboard } from './pages/HrDashboard.jsx';
 import { HrHeadDashboard } from './pages/HrHeadDashboard.jsx';
@@ -92,6 +96,15 @@ export function App() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [profile, setProfile] = useState(null);
   const [scrollTarget, setScrollTarget] = useState(null);
+  // Whether the signed-in applicant has a *finished* standalone resume on
+  // file (see ResumeForm.jsx / applicantResume.js) — null while unknown/
+  // loading. An in-progress draft (row exists, completed_at still null)
+  // counts as false here, same as no resume at all: either way, landing on
+  // 'home' should route back into ResumeForm — for a draft, that resumes
+  // at the step it was left on instead of restarting blank. Only ever
+  // checked for applicants; stays null for HR/no-profile so it can't
+  // accidentally gate anything on that side.
+  const [hasResume, setHasResume] = useState(null);
 
   // Third arg is optional: { scrollTo: 'sectionId' } lets a link on any page
   // (e.g. Header's "About Us") land on the homepage already scrolled to a
@@ -111,6 +124,29 @@ export function App() {
       window.history.replaceState(null, '', window.location.pathname);
     }
   };
+
+  // Resumes wherever a Google sign-in was started from — signInWithGoogle()
+  // (src/lib/auth.js) bakes `screen`/`job` into the redirect URL before
+  // leaving for accounts.google.com, since that's a full-page navigation
+  // away and back that wipes every bit of in-memory state getInitialScreen()
+  // itself only reads once, synchronously, so it can't await a job fetch;
+  // this runs once after mount instead. Supabase's own auth params (its
+  // PKCE `code` or token hash) get consumed by supabase-js separately and
+  // don't collide with these.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pendingScreen = params.get('screen');
+    const pendingJobId = params.get('job');
+    if (pendingScreen === 'apply' && pendingJobId) {
+      getJob(pendingJobId).then(({ data }) => {
+        if (data) nav('apply', data);
+      });
+    } else if (pendingScreen === 'my-applications' || pendingScreen === 'resume' || pendingScreen === 'matches') {
+      nav(pendingScreen);
+    }
+    // Only ever meant to run once, against the URL the page loaded with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -138,12 +174,31 @@ export function App() {
     getProfile(session.user.id).then(({ data }) => setProfile(data));
   }, [session]);
 
+  // Drives the "resume-first" gate below: an applicant with no resume on
+  // file yet gets routed into ResumeForm the moment they'd otherwise land on
+  // the homepage, rather than being asked to fill it out mid-apply. Reset to
+  // null (unknown) on every profile change so a stale true/false from a
+  // previous session can't leak into a different signed-in applicant.
+  useEffect(() => {
+    if (profile?.role !== 'applicant') {
+      setHasResume(null);
+      return;
+    }
+    let cancelled = false;
+    getMyResume(profile.id).then(({ data }) => {
+      if (!cancelled) setHasResume(!!data?.completed_at);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
+
   // Covers the one true "opening the website" gap — the very first paint,
   // before we know whether there's a session at all. Never re-shown after.
   if (!sessionChecked) return <LoadingScreen />;
 
   if (screen === 'filter') return <JobFilter nav={nav} />;
-  if (screen === 'details') return <JobDetails job={job} nav={nav} />;
+  if (screen === 'details') return <JobDetails job={job} nav={nav} profile={profile?.role === 'applicant' ? profile : null} />;
   if (screen === 'faq') return <FAQ nav={nav} />;
   if (screen === 'privacy') return <Privacy nav={nav} />;
   if (screen === 'terms') return <Terms nav={nav} />;
@@ -154,6 +209,20 @@ export function App() {
   if (screen === 'reset-password') return <ResetPassword nav={nav} />;
   if (screen === 'create') return <CreateAccount job={job} nav={nav} />;
   if (screen === 'hr-login') return <HrLogin nav={nav} />;
+
+  if (screen === 'resume') {
+    if (!session) return <SignIn nav={nav} redirectTo="resume" />;
+    if (!profile) return <LoadingScreen />;
+    if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
+    return <ResumeForm profile={profile} nav={nav} onResumeSaved={() => setHasResume(true)} />;
+  }
+
+  if (screen === 'matches') {
+    if (!session) return <SignIn nav={nav} redirectTo="matches" />;
+    if (!profile) return <LoadingScreen />;
+    if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
+    return <JobMatches profile={profile} nav={nav} />;
+  }
 
   if (screen === 'apply') {
     if (!session) return <SignIn job={job} nav={nav} />;
@@ -192,6 +261,31 @@ export function App() {
     // the operational screening-queue dashboard (see HrPersonnelDashboard.jsx).
     if (profile.role === 'hr_head') return <HrHeadDashboard nav={nav} profile={profile} />;
     return <HrPersonnelDashboard nav={nav} profile={profile} />;
+  }
+
+  // "The login will show up once you enter the website" — a brand-new,
+  // signed-out visitor lands on the sign-in wall instead of the marketing
+  // homepage. Informational pages (FAQ/Privacy/Terms/Contact/job listings
+  // above) stay reachable without an account; only this root landing spot
+  // is gated. HR sessions pass straight through, same as before.
+  if (!session) return <SignIn nav={nav} />;
+
+  // Resume-first: an applicant who hasn't filled out their standalone
+  // resume yet gets sent there instead of the homepage, from every path
+  // that lands here (fresh sign-up, Google sign-in, or just revisiting)
+  // rather than only right after signup — so there's one single place this
+  // is enforced instead of duplicating the check at every entry point.
+  if (profile?.role === 'applicant' && hasResume === false) {
+    return <ResumeForm profile={profile} nav={nav} onResumeSaved={() => setHasResume(true)} />;
+  }
+
+  // Once the resume is done, the landing spot is "jobs that match you," not
+  // the marketing homepage — the whole point of resume-first is that the
+  // applicant shouldn't have to go browse for a role themselves. Homepage
+  // stays reachable through other links (e.g. "Open Roles"), just isn't the
+  // default anymore for a signed-in applicant with a finished resume.
+  if (profile?.role === 'applicant' && hasResume === true) {
+    return <JobMatches profile={profile} nav={nav} />;
   }
 
   // An HR account browsing the public site is never "the applicant" here —
