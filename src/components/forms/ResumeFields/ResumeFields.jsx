@@ -1,9 +1,6 @@
-// Shared building blocks for the two resume-shaped forms in the app:
-// ApplicationForm.jsx (per-job, job-specific conditionals like driving
-// fields) and ResumeForm.jsx (the standalone "fill once" resume, no job in
-// mind yet). Extracted here once a second real consumer needed the exact
-// same sections/inputs — keeping two hand-copied versions in sync would
-// have been the more error-prone option.
+// Resume-section building blocks (work experience, education, skills, driving
+// fields, etc.) used by ResumeForm.jsx — the one standalone "fill once"
+// resume every applicant completes before browsing or matching to jobs.
 import { useState } from 'react';
 import { Input } from '../../core/Input/Input.jsx';
 import { Button } from '../../core/Button/Button.jsx';

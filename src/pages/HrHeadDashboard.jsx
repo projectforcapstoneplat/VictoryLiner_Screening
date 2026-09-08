@@ -12,6 +12,7 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getHeadOverview } from '../lib/reports.js';
 import { getScreeningSettings, updateMinResumeMatchPercent, updateInterviewQuestionCount } from '../lib/screeningSettings.js';
+import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -22,6 +23,19 @@ const KPI_ICONS = {
 };
 
 const RANK_ACCENT = ['#d4af37', '#9aa0a6', '#b56a3f']; // gold / silver / bronze — 4th+ stays plain
+
+function timeOfDayGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase();
+}
 
 const STATUS_META = {
   published: { label: 'Published', color: '#0ca30c' },
@@ -72,10 +86,16 @@ function CandidateRow({ rank, candidate, rankBy, onView }) {
       style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 8px', borderTop: rank === 1 ? 'none' : '1px solid var(--border-hairline)', cursor: 'pointer', borderRadius: 8 }}
     >
       <div style={{
-        width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 'var(--text-xs)', fontWeight: 700, color: accent ? '#fff' : 'var(--text-primary)', background: accent || 'var(--surface-page-alt)',
+        width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 10, fontWeight: 700, color: accent ? '#fff' : 'var(--text-primary)', background: accent || 'var(--surface-page-alt)',
       }}>
         {rank}
+      </div>
+      <div style={{
+        width: 34, height: 34, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 'var(--text-xs)', fontWeight: 700, color: '#fff', background: 'var(--action-primary-bg)',
+      }}>
+        {initials(candidate.name)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{candidate.name}</div>
@@ -90,48 +110,77 @@ function CandidateRow({ rank, candidate, rankBy, onView }) {
   );
 }
 
-function SentimentBar({ sentiment }) {
-  const { positive, neutral, negative, total } = sentiment;
-  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No interview responses evaluated yet.</p>;
-  const segments = [
-    { key: 'positive', label: 'Positive', value: positive, color: '#0ca30c' },
-    { key: 'neutral', label: 'Neutral', value: neutral, color: 'var(--gray-500)' },
-    { key: 'negative', label: 'Negative', value: negative, color: '#d03b3b' },
-  ];
+// Interviews here are pre-recorded on the applicant's own time, not a
+// real-time call HR joins — "recently completed" (finished + AI-evaluated),
+// not "scheduled" or "live," to keep that distinction honest.
+function RecentInterviewRow({ candidate, isFirst, onView }) {
   return (
-    <div>
-      <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', gap: 2 }}>
-        {segments.map((s) => s.value > 0 && <div key={s.key} title={`${s.label}: ${s.value}`} style={{ width: `${(s.value / total) * 100}%`, background: s.color, transition: 'width 0.8s ease' }} />)}
+    <div onClick={onView} className="hover-lift" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 8px', borderTop: isFirst ? 'none' : '1px solid var(--border-hairline)', cursor: 'pointer', borderRadius: 8 }}>
+      <div style={{
+        width: 34, height: 34, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 'var(--text-xs)', fontWeight: 700, color: '#fff', background: 'var(--action-primary-bg)',
+      }}>
+        {initials(candidate.name)}
       </div>
-      <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
-        {segments.map((s) => (
-          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-            <span>{s.label} ({s.value})</span>
-          </div>
-        ))}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{candidate.name}</div>
+        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>{candidate.job?.title || 'Unknown role'}</div>
       </div>
+      <span style={{ fontSize: 'var(--text-xs)', opacity: 0.55, flexShrink: 0, whiteSpace: 'nowrap' }}>{new Date(candidate.interviewEvaluatedAt).toLocaleDateString()}</span>
+      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, flexShrink: 0, minWidth: 44, textAlign: 'right' }}>{candidate.interviewScore != null ? `${candidate.interviewScore}%` : '—'}</span>
     </div>
   );
 }
 
-// Generic single-series magnitude bar chart (score distribution, category
-// breakdown) — kept as one flat brand-color hue since a single series never
-// needs a categorical palette; order along the axis already conveys the
-// score buckets' sequence, so color doesn't need to redundantly encode it.
-function HorizontalBarChart({ rows, emptyMessage }) {
-  const total = rows.reduce((sum, r) => sum + r.count, 0);
-  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>{emptyMessage}</p>;
-  const max = Math.max(...rows.map((r) => r.count));
+// Two-row comparison of average days-to-decision for advanced vs. declined
+// outcomes. Kept separate from HorizontalBarChart because its values are
+// fractional days rather than whole counts, and either side can be null
+// (no decisions of that kind yet) — a state HorizontalBarChart's
+// count-based empty check doesn't represent correctly.
+function TimeToHireByOutcome({ data }) {
+  const rows = [
+    { label: 'Advanced', value: data.advanced, color: 'var(--status-positive, #2e7d32)' },
+    { label: 'Declined', value: data.declined, color: 'var(--status-negative, #c62828)' },
+  ];
+  if (rows.every((r) => r.value == null)) {
+    return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications with a final decision yet.</p>;
+  }
+  const max = Math.max(...rows.map((r) => r.value || 0), 0.1);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {rows.map((r) => (
-        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }} title={`${r.label}: ${r.count} applicant${r.count === 1 ? '' : 's'}`}>
-          <span style={{ fontSize: 'var(--text-xs)', width: 96, flexShrink: 0, opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 'var(--text-xs)', width: 96, flexShrink: 0, opacity: 0.7 }}>{r.label}</span>
           <div style={{ flex: 1, height: 10, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${max > 0 ? (r.count / max) * 100 : 0}%`, borderRadius: 999, background: 'var(--action-primary-bg)', transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)' }} />
+            <div style={{ height: '100%', width: `${r.value != null ? (r.value / max) * 100 : 0}%`, borderRadius: 999, background: r.color, transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)' }} />
           </div>
-          <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, width: 22, textAlign: 'right', flexShrink: 0 }}>{r.count}</span>
+          <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, width: 50, textAlign: 'right', flexShrink: 0 }}>{r.value != null ? `${r.value}d` : '—'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Time-series get vertical bars, not horizontal ones — a left-to-right axis
+// reading "oldest to newest" is the natural convention for a trend, the same
+// reason line charts run left-to-right. Still bars rather than a smoothed
+// line/area: weekly volume is discrete, bucketed data (see buildWeeklyVolume
+// in reports.js), not a continuously-sampled quantity, so bars represent it
+// more honestly than a line would.
+function WeeklyTrendChart({ rows, emptyMessage }) {
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>{emptyMessage}</p>;
+  const max = Math.max(...rows.map((r) => r.count), 1);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 150 }}>
+      {rows.map((r) => (
+        <div key={r.label} title={`Week of ${r.label}: ${r.count} application${r.count === 1 ? '' : 's'}`} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, height: '100%', justifyContent: 'flex-end' }}>
+          <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700 }}>{r.count}</span>
+          <div style={{
+            width: '100%', maxWidth: 32, height: `${(r.count / max) * 100}%`, minHeight: r.count > 0 ? 4 : 0,
+            borderRadius: '4px 4px 0 0', background: 'var(--action-primary-bg)', transition: 'height 0.8s cubic-bezier(0.16, 1, 0.3, 1)',
+          }} />
+          <span style={{ fontSize: 10, opacity: 0.6, whiteSpace: 'nowrap' }}>{r.label}</span>
         </div>
       ))}
     </div>
@@ -307,11 +356,19 @@ export function HrHeadDashboard({ nav, profile }) {
   return (
     <HrShell active="hr-dashboard" nav={nav} profile={profile}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <Reveal>
-          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Recruitment Overview</h1>
-          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>
-            Welcome back, {profile?.full_name || profile?.email}. System-wide performance across every job posting.
-          </p>
+        <Reveal style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 6 }}>
+              Recruitment Overview
+            </div>
+            <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>
+              {timeOfDayGreeting()}, {(profile?.full_name || profile?.email || '').split(' ')[0]}.
+            </h1>
+            <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · System-wide performance across every job posting.
+            </p>
+          </div>
+          <Button variant="strong" size="sm" onClick={() => nav('hr-job-form', null)}>+ New Job Posting</Button>
         </Reveal>
 
         {error && <p style={{ color: 'var(--red-700)' }}>{error}</p>}
@@ -326,9 +383,75 @@ export function HrHeadDashboard({ nav, profile }) {
               <KpiCard icon={KPI_ICONS.video} accent="violet" label="Interviews Completed" value={report.scores.interviewCompletedCount} trend={report.trends.interviewsCompleted} />
             </div>
 
+            <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
+              <SectionCard title="Active in Pipeline" subtitle="Applications still awaiting a final decision" delay={0.01}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-6xl)', color: 'var(--action-primary-bg)' }}>
+                    {report.decisionOutcomes.pending}
+                  </span>
+                  <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>of {report.applicantCount} total applicants</span>
+                </div>
+                <div style={{ display: 'flex', gap: 24, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)', flexWrap: 'wrap' }}>
+                  {report.funnel.map((f) => (
+                    <div key={f.label}>
+                      <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{f.label}</div>
+                      <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)' }}>{f.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)' }}>
+                  <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginBottom: 10 }}>Where the pending ones are stuck</p>
+                  <HorizontalBarChart
+                    rows={[
+                      { label: 'Screening', count: report.pendingBreakdown.awaitingScreening },
+                      { label: 'Final call', count: report.pendingBreakdown.awaitingFinalDecision },
+                    ]}
+                    emptyMessage="Nothing pending right now."
+                  />
+                </div>
+              </SectionCard>
+              <SectionCard title="Average Time-to-Hire" subtitle="Days from application to HR's final call" delay={0.02}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-6xl)', color: 'var(--action-primary-bg)' }}>
+                    {report.avgTimeToHire != null ? report.avgTimeToHire : '—'}
+                  </span>
+                  {report.avgTimeToHire != null && <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>days</span>}
+                </div>
+                <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)' }}>
+                  {report.avgTimeToHire != null
+                    ? `Based on ${report.decisionOutcomes.advanced + report.decisionOutcomes.declined} application${report.decisionOutcomes.advanced + report.decisionOutcomes.declined === 1 ? '' : 's'} with a final decision.`
+                    : 'No applications have reached a final decision yet.'}
+                </p>
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)' }}>
+                  <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginBottom: 10 }}>Advanced vs. declined — does one take longer?</p>
+                  <TimeToHireByOutcome data={report.avgTimeToHireByOutcome} />
+                </div>
+              </SectionCard>
+            </div>
+
+            <SectionCard title="Recently Completed Interviews" subtitle="Video interviews finished and AI-evaluated, most recent first" delay={0.015}>
+              {report.recentInterviews.length === 0 ? (
+                <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No interviews completed yet.</p>
+              ) : (
+                <div>
+                  {report.recentInterviews.map((c, i) => (
+                    <RecentInterviewRow key={c.applicationId} candidate={c} isFirst={i === 0} onView={() => c.job && nav('hr-applicant-list', c.job)} />
+                  ))}
+                </div>
+              )}
+            </SectionCard>
+
+            <SectionCard title="Applications Over Time" subtitle="Weekly volume, last 8 weeks" delay={0.02}>
+              <WeeklyTrendChart rows={report.weeklyApplications} emptyMessage="No applications yet." />
+            </SectionCard>
+
+            <SectionCard title="Overall Hiring Funnel" subtitle="How applicants narrow down, across every job posting" delay={0.03}>
+              <HorizontalBarChart rows={report.funnel.map((f) => ({ label: f.label, count: f.value }))} emptyMessage="No applications yet." />
+            </SectionCard>
+
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'stretch' }}>
               <SectionCard
-                title="Candidate Ranking — Top Performers"
+                title="Top Candidates"
                 subtitle="Filter and rank by whichever score matters right now"
                 action={categories.length > 0 && (
                   <select
@@ -378,7 +501,7 @@ export function HrHeadDashboard({ nav, profile }) {
                 ) : (
                   <div>
                     {filteredCandidates.map((c, i) => (
-                      <CandidateRow key={c.applicationId} rank={i + 1} candidate={c} rankBy={rankBy} onView={() => c.job && nav('hr-applicants', c.job)} />
+                      <CandidateRow key={c.applicationId} rank={i + 1} candidate={c} rankBy={rankBy} onView={() => c.job && nav('hr-applicant-list', c.job)} />
                     ))}
                   </div>
                 )}
@@ -407,7 +530,30 @@ export function HrHeadDashboard({ nav, profile }) {
               </SectionCard>
             </div>
 
-            <SectionCard title="Job Posting Pipelines" subtitle="Applications narrowing through screening, interview, and decision">
+            <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
+              <SectionCard title="Job Postings by Status" subtitle="Published, draft, and closed">
+                <HorizontalBarChart
+                  rows={[
+                    { label: 'Published', count: report.jobStats.published },
+                    { label: 'Draft', count: report.jobStats.draft },
+                    { label: 'Closed', count: report.jobStats.closed },
+                  ]}
+                  emptyMessage="No job postings yet."
+                />
+              </SectionCard>
+              <SectionCard title="Overall Decision Outcomes" subtitle="Final calls across every application" delay={0.06}>
+                <HorizontalBarChart
+                  rows={[
+                    { label: 'Advanced', count: report.decisionOutcomes.advanced },
+                    { label: 'Declined', count: report.decisionOutcomes.declined },
+                    { label: 'Pending', count: report.decisionOutcomes.pending },
+                  ]}
+                  emptyMessage="No applications yet."
+                />
+              </SectionCard>
+            </div>
+
+            <SectionCard title="Hiring Progress by Job" subtitle="Applications narrowing through screening, interview, and decision">
               {report.jobBreakdown.length === 0 ? (
                 <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No job postings yet.</p>
               ) : (
@@ -424,9 +570,9 @@ export function HrHeadDashboard({ nav, profile }) {
                             {avgResume != null && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>· avg resume {avgResume}%</span>}
                             {avgInterview != null && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>· avg interview {avgInterview}%</span>}
                           </div>
-                          <Button variant="ghost" size="sm" onClick={() => nav('hr-applicants', job)}>View</Button>
+                          <Button variant="ghost" size="sm" onClick={() => nav('hr-applicant-list', job)}>View</Button>
                         </div>
-                        <PipelineBar pipeline={pipeline} />
+                        <PipelineBar pipeline={pipeline} job={job} nav={nav} />
                       </div>
                     );
                   })}
@@ -486,7 +632,7 @@ export function HrHeadDashboard({ nav, profile }) {
                                 return (
                                   <div
                                     key={`${d.applicationId}-${d.decidedAt}`}
-                                    onClick={() => d.job && nav('hr-applicants', d.job)}
+                                    onClick={() => d.job && nav('hr-applicant-list', d.job)}
                                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, cursor: d.job ? 'pointer' : 'default' }}
                                   >
                                     <div style={{ minWidth: 0 }}>

@@ -1,60 +1,5 @@
 import { supabase } from './supabaseClient.js';
 
-export async function submitApplication({
-  jobId,
-  applicantId,
-  fullName,
-  email,
-  phone,
-  workExperience,
-  education,
-  skills,
-  certifications,
-  coverNote,
-  driversLicenseType,
-  driversLicenseRestrictions,
-  yearsDrivingExperience,
-  hasNbiClearance,
-  willingShiftingSchedule,
-  educationLevel,
-  currentLocation,
-  hasMedicalCertificate,
-}) {
-  const { data, error } = await supabase
-    .from('applications')
-    .insert({
-      job_id: jobId,
-      applicant_id: applicantId,
-      full_name: fullName,
-      email,
-      phone,
-      work_experience: workExperience,
-      education,
-      skills,
-      certifications,
-      cover_note: coverNote,
-      drivers_license_type: driversLicenseType ?? null,
-      drivers_license_restrictions: driversLicenseRestrictions ?? [],
-      years_driving_experience: yearsDrivingExperience ?? null,
-      has_nbi_clearance: hasNbiClearance ?? null,
-      willing_shifting_schedule: willingShiftingSchedule ?? null,
-      education_level: educationLevel ?? null,
-      current_location: currentLocation ?? null,
-      has_medical_certificate: hasMedicalCertificate ?? null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    if (error.code === '23505') {
-      return { error: { message: 'You have already applied to this job.' } };
-    }
-    return { error };
-  }
-
-  return { data };
-}
-
 export async function listApplicationsForJob(jobId) {
   const { data, error } = await supabase
     .from('applications')
@@ -65,31 +10,30 @@ export async function listApplicationsForJob(jobId) {
   return { data: data || [], error };
 }
 
-// Used by the apply flow to detect an already-submitted application for this
-// job, so a returning applicant is routed onward instead of shown a blank
-// resume form again.
-export async function getApplicationForJob(jobId, applicantId) {
-  const { data, error } = await supabase
-    .from('applications')
-    .select('*, job_postings(title, category)')
-    .eq('job_id', jobId)
-    .eq('applicant_id', applicantId)
-    .maybeSingle();
-  return { data, error };
-}
-
-// Used by ApplicationForm to pre-fill a new application from the applicant's
-// most recent other one, so they aren't retyping work experience/education/
-// skills/etc. from scratch for every job they apply to.
-export async function getMostRecentApplication(applicantId) {
+// Full row for one application — used when HR expands a single applicant's
+// row in the unified Applicants table (HrApplicantsList.jsx). The table
+// itself only ever holds the lightweight per-applicant summary from
+// reports.js (scores/status, not phone/skills/education/etc.), so the full
+// record is fetched on demand only for whichever row is actually opened.
+export async function getApplicationById(applicationId) {
   const { data, error } = await supabase
     .from('applications')
     .select('*')
-    .eq('applicant_id', applicantId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .eq('id', applicationId)
+    .single();
   return { data, error };
+}
+
+// Bulk version of the above — used for CSV export, which needs full fields
+// (phone, skills, education, driver's license, etc.) for every currently
+// filtered row at once, not just whichever one HR happens to have expanded.
+export async function listApplicationsByIds(applicationIds) {
+  if (!applicationIds.length) return { data: [] };
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .in('id', applicationIds);
+  return { data: data || [], error };
 }
 
 export async function listApplicationsForApplicant(applicantId) {

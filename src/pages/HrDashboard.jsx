@@ -70,7 +70,7 @@ export function HrDashboard({ nav, profile }) {
                     <div style={{ fontSize: 'var(--text-sm)', opacity: 0.75 }}>{j.category} · {j.open_positions} open position{j.open_positions === 1 ? '' : 's'}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <Button variant="ghost" size="sm" onClick={() => nav('hr-applicants', j)}>View Applicants</Button>
+                    <Button variant="ghost" size="sm" onClick={() => nav('hr-applicant-list', j)}>View Applicants</Button>
                     <Button variant="ghost" size="sm" onClick={() => nav('hr-job-form', j)}>Edit</Button>
                     {j.status !== 'published' && <Button variant="ghost" size="sm" onClick={() => handleStatus(j, 'published')}>Publish</Button>}
                     {j.status === 'published' && <Button variant="ghost" size="sm" onClick={() => handleStatus(j, 'closed')}>Close</Button>}

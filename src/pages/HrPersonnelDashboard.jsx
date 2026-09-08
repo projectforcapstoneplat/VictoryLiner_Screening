@@ -12,6 +12,7 @@ import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getPersonnelOverview } from '../lib/reports.js';
 import { updateApplicationStatus, notifyApplicantStatusChange } from '../lib/applications.js';
 import { getSignedVideoUrl } from '../lib/interviewEvaluation.js';
+import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -206,7 +207,7 @@ function RecentApplicationsTable({ recent, nav }) {
                       <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: meta.bg, color: meta.fg }}>{meta.label}</span>
                     </td>
                     <td style={{ padding: '12px 0', textAlign: 'right' }}>
-                      <Button variant="ghost" size="sm" onClick={() => r.job && nav('hr-applicants', r.job)}>View</Button>
+                      <Button variant="ghost" size="sm" onClick={() => r.job && nav('hr-applicant-list', r.job)}>View</Button>
                     </td>
                   </tr>
                 );
@@ -258,7 +259,7 @@ export function HrPersonnelDashboard({ nav, profile }) {
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
               <ScreeningQueue queue={report.queue} onDecide={handleDecide} profile={profile} />
-              <SectionCard title="Live Pipeline Stages" subtitle="Top job postings by applicant volume" delay={0.06}>
+              <SectionCard title="Hiring Progress" subtitle="Top job postings by applicant volume" delay={0.06}>
                 {report.jobBreakdown.length === 0 ? (
                   <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications yet.</p>
                 ) : (
@@ -268,17 +269,26 @@ export function HrPersonnelDashboard({ nav, profile }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                           <strong style={{ fontSize: 'var(--text-sm)' }}>{job.title}</strong>
                           <span
-                            onClick={() => nav('hr-applicants', job)}
+                            onClick={() => nav('hr-applicant-list', job)}
                             style={{ fontSize: 'var(--text-xs)', color: 'var(--text-link)', cursor: 'pointer' }}
                           >
                             View all ({applicantCount})
                           </span>
                         </div>
-                        <PipelineBar pipeline={pipeline} />
+                        <PipelineBar pipeline={pipeline} job={job} nav={nav} />
                       </div>
                     ))}
                   </div>
                 )}
+              </SectionCard>
+            </div>
+
+            <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
+              <SectionCard title="Resume Score Distribution" subtitle="Where your current applicant pool clusters" delay={0.06}>
+                <HorizontalBarChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
+              </SectionCard>
+              <SectionCard title="Interview Sentiment" subtitle="NLP sentiment across all evaluated answers" delay={0.08}>
+                <SentimentBar sentiment={report.sentiment} />
               </SectionCard>
             </div>
 

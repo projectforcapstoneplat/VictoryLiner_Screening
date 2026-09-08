@@ -82,7 +82,7 @@ function JobResultCard({ index, job, onView, onApply }) {
           )}
         </div>
         <Button variant="strong" size="sm" disabled={deadline?.closed} onClick={(e) => { e.stopPropagation(); if (!deadline?.closed) onApply(); }} style={deadline?.closed ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
-          {deadline?.closed ? 'Closed' : 'Apply Now'}
+          {deadline?.closed ? 'Closed' : 'View Details'}
         </Button>
       </div>
     </div>
@@ -205,7 +205,7 @@ export function JobFilter({ nav }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {pagedJobs.map((j, i) => (
-              <JobResultCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('apply', j)} />
+              <JobResultCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('details', j)} />
             ))}
           </div>
         )}

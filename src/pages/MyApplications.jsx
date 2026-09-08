@@ -19,9 +19,9 @@ function resolveMinPercent(application, globalMinPercent) {
   return override != null ? override : globalMinPercent;
 }
 
-// Same 5 steps the apply flow's Stepper shows on the way in (SignIn = 0,
-// ApplicationForm = 1, Interview = 3) — this reconstructs "which step am I
-// on" for an applicant looking back at an application already submitted,
+// Same steps the apply flow's Stepper shows on the way in (Sign In = 0,
+// Apply = 1, Interview = 3) — this reconstructs "which step am I on" for an
+// applicant looking back at an application already submitted,
 // since nothing here tracks a literal step number once they've left the
 // apply flow. Once a final decision is made, the whole pipeline is done, so
 // every step reads as complete rather than parking on "Review" forever.
@@ -38,8 +38,8 @@ function getStepIndex(application, completion, resumeEvaluation, globalMinPercen
 
 // HR's decision (`status` column) always wins. The video interview only
 // unlocks once BOTH are true: HR has reviewed the resume and advanced the
-// applicant into "interview_stage" (see src/pages/HrApplicants.jsx), and the
-// AI resume score clears the minimum — either the job posting's own
+// applicant into "interview_stage" (see src/pages/HrApplicantsList.jsx), and
+// the AI resume score clears the minimum — either the job posting's own
 // override, or HR Head's system-wide default (see
 // src/pages/HrHeadDashboard.jsx's Screening Settings card). Short of either,
 // HR still sees and can decide the application manually, but the applicant

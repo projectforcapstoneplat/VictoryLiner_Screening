@@ -146,6 +146,8 @@ Deno.serve(async (req) => {
 
     const resendKey = Deno.env.get('RESEND_API_KEY');
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
+    const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
+    const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
     let scoredCount = 0;
     let notifiedCount = 0;
 
@@ -183,7 +185,7 @@ Deno.serve(async (req) => {
         scoredCount += 1;
 
         if (score >= effectiveMinPercent && resendKey && resume.email) {
-          const sent = await sendMatchEmail(resendKey, fromEmail, resume.email, resume.full_name, job.title);
+          const sent = await sendMatchEmail(resendKey, fromEmail, resume.email, resume.full_name, job.title, siteUrl);
           if (sent) notifiedCount += 1;
         }
       } catch {
@@ -197,7 +199,19 @@ Deno.serve(async (req) => {
   }
 });
 
-async function sendMatchEmail(resendKey: string, fromEmail: string, toEmail: string, fullName: string | null, jobTitle: string): Promise<boolean> {
+async function sendMatchEmail(
+  resendKey: string,
+  fromEmail: string,
+  toEmail: string,
+  fullName: string | null,
+  jobTitle: string,
+  siteUrl: string | null,
+): Promise<boolean> {
+  // Same reasoning as send-status-email's link: takes the applicant straight
+  // to their scored matches instead of a bare "sign in and find it yourself"
+  // instruction. Falls back to plain text when ALLOWED_ORIGIN isn't set
+  // (local/testing) — there's no real domain to link to in that case.
+  const link = siteUrl ? `${siteUrl}/?screen=matches` : null;
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -209,7 +223,11 @@ async function sendMatchEmail(resendKey: string, fromEmail: string, toEmail: str
         html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
           <p>Hi ${fullName || 'there'},</p>
           <p>A new opening just went live that matches your resume: <strong>${jobTitle}</strong>.</p>
-          <p>Sign in to Victory Liner Careers to view it and apply.</p>
+          <p>${
+            link
+              ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to view it and apply</a>.`
+              : 'Sign in to Victory Liner Careers to view it and apply.'
+          }</p>
           <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
         </div>`,
       }),

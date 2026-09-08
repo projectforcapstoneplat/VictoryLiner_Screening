@@ -96,7 +96,34 @@ function FeatureItem({ index, title, description }) {
   );
 }
 
-function OpenRoleCard({ index, job, onView, onApply }) {
+// Replaces the search + job grid for a signed-in applicant (who by
+// definition already has a completed resume — see App.jsx's gate) — rather
+// than making them browse and self-assess fit against every posting, this
+// is the entry point into the AI matching flow (JobMatches.jsx), which they
+// now trigger on demand instead of it running automatically for them.
+function MatchMeCard({ nav }) {
+  return (
+    <Reveal className="hover-lift" style={{
+      background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)',
+      padding: '56px 40px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+    }}>
+      <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary-bg)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2l2.6 6.6L21 9.3l-5 4.5 1.4 7.2L12 17.5 6.6 21l1.4-7.2-5-4.5 6.4-.7z" />
+        </svg>
+      </div>
+      <div>
+        <strong style={{ fontSize: 'var(--text-lg)', display: 'block', marginBottom: 6 }}>Skip the browsing</strong>
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.7, maxWidth: 420 }}>
+          Your resume's already on file — let our AI compare it against every open position and show you which ones actually fit.
+        </p>
+      </div>
+      <Button variant="strong" size="md" onClick={() => nav('matches')}>Match Me to a Job</Button>
+    </Reveal>
+  );
+}
+
+function OpenRoleCard({ index, job, onView }) {
   return (
     <Reveal
       delay={index * 0.1}
@@ -116,8 +143,7 @@ function OpenRoleCard({ index, job, onView, onApply }) {
       </div>
       <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7 }}>{[job.category, job.location].filter(Boolean).join(' · ')}</div>
       <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-        <Button variant="ghost" size="sm" onClick={onView} style={{ flex: 1 }}>View Details</Button>
-        <Button variant="strong" size="sm" onClick={onApply} style={{ flex: 1 }}>Quick Apply</Button>
+        <Button variant="strong" size="sm" onClick={onView} style={{ flex: 1 }}>View Details</Button>
       </div>
     </Reveal>
   );
@@ -254,12 +280,20 @@ export function Homepage({ nav, profile, scrollTarget }) {
 
   const [connectorRef, connectorInView] = useInView({ threshold: 0.4 });
 
+  // "Apply Now" used to just point at the same full listing as "Open Roles"
+  // — a generic browse-it-yourself CTA that no longer matches how applying
+  // actually works here. It's now the same "Match Me to a Job" action the
+  // homepage's own Explore Open Positions section leads with, so the navbar
+  // and the page content say the same thing. "Open Roles" stays as the
+  // manual-browse alternative (full transparency of every posting, not just
+  // ones that scored well) — renamed so the two aren't easily confused for
+  // the same action.
   const navLinks = [
-    { label: 'Open Roles', onClick: () => nav('filter') },
+    { label: 'Browse All Roles', onClick: () => nav('filter') },
     { label: 'How It Works', onClick: () => scrollTo('process') },
     { label: 'Track Application', onClick: () => nav('my-applications') },
     { label: 'About Us', onClick: () => scrollTo('about') },
-    { label: 'Apply Now', onClick: () => nav('filter'), strong: true },
+    { label: 'Match Me to a Job', onClick: () => nav('matches'), strong: true },
   ];
 
   return (
@@ -354,33 +388,45 @@ export function Homepage({ nav, profile, scrollTarget }) {
       <CategoryMarquee categories={categories} />
 
       <section style={{ maxWidth: 1066, margin: '90px auto 0', padding: '0 20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
-          <div>
-            <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
-            <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>Find a role that fits your skills and ambition.</Reveal>
-          </div>
-          <div style={{ background: 'var(--surface-search)', borderRadius: 'var(--radius-2xl)', height: 56, minWidth: 280, display: 'flex', alignItems: 'center', padding: '0 20px', boxShadow: 'var(--shadow-hairline)' }}>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search job title or category"
-              style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)' }}
-            />
-            <img src={searchIconOutline} alt="" style={{ width: 20, opacity: 0.7 }} />
-          </div>
-        </div>
-        {displayedJobs.length === 0 ? (
-          <p style={{ opacity: 0.7 }}>No open positions match your search right now.</p>
+        {profile ? (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 30 }}>
+              <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
+              <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>No need to browse — we'll find the roles that fit you.</Reveal>
+            </div>
+            <MatchMeCard nav={nav} />
+          </>
         ) : (
-          <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
-            {displayedJobs.map((j, i) => (
-              <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('apply', j)} />
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
+              <div>
+                <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
+                <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>Find a role that fits your skills and ambition.</Reveal>
+              </div>
+              <div style={{ background: 'var(--surface-search)', borderRadius: 'var(--radius-2xl)', height: 56, minWidth: 280, display: 'flex', alignItems: 'center', padding: '0 20px', boxShadow: 'var(--shadow-hairline)' }}>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search job title or category"
+                  style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)' }}
+                />
+                <img src={searchIconOutline} alt="" style={{ width: 20, opacity: 0.7 }} />
+              </div>
+            </div>
+            {displayedJobs.length === 0 ? (
+              <p style={{ opacity: 0.7 }}>No open positions match your search right now.</p>
+            ) : (
+              <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
+                {displayedJobs.map((j, i) => (
+                  <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} />
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 30, textAlign: 'center' }}>
+              <Button variant="ghost" size="sm" onClick={() => nav('filter')}>View All Open Positions</Button>
+            </div>
+          </>
         )}
-        <div style={{ marginTop: 30, textAlign: 'center' }}>
-          <Button variant="ghost" size="sm" onClick={() => nav('filter')}>View All Open Positions</Button>
-        </div>
       </section>
 
       <div style={{ position: 'relative', overflow: 'hidden' }}>

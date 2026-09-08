@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from './lib/supabaseClient.js';
 import { getProfile, signOut } from './lib/auth.js';
 import { getJob } from './lib/jobs.js';
@@ -15,7 +15,6 @@ import { SignIn } from './pages/SignIn.jsx';
 import { ForgotPassword } from './pages/ForgotPassword.jsx';
 import { ResetPassword } from './pages/ResetPassword.jsx';
 import { CreateAccount } from './pages/CreateAccount.jsx';
-import { ApplicationForm } from './pages/ApplicationForm.jsx';
 import { ResumeForm } from './pages/ResumeForm.jsx';
 import { JobMatches } from './pages/JobMatches.jsx';
 import { HrLogin } from './pages/HrLogin.jsx';
@@ -24,7 +23,6 @@ import { HrHeadDashboard } from './pages/HrHeadDashboard.jsx';
 import { HrPersonnelDashboard } from './pages/HrPersonnelDashboard.jsx';
 import { JobPostingForm } from './pages/JobPostingForm.jsx';
 import { HrAccounts } from './pages/HrAccounts.jsx';
-import { HrApplicants } from './pages/HrApplicants.jsx';
 import { HrApplicantsList } from './pages/HrApplicantsList.jsx';
 import { InterviewQuestions } from './pages/InterviewQuestions.jsx';
 import { MyApplications } from './pages/MyApplications.jsx';
@@ -96,6 +94,10 @@ export function App() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [profile, setProfile] = useState(null);
   const [scrollTarget, setScrollTarget] = useState(null);
+  // Set only via nav(screen, job, { stageFilter }) — lets a pipeline stage
+  // (PipelineBar.jsx) jump straight to that job's Applicants page already
+  // filtered to who's actually in that stage, instead of just a bare count.
+  const [stageFilter, setStageFilter] = useState(null);
   // Whether the signed-in applicant has a *finished* standalone resume on
   // file (see ResumeForm.jsx / applicantResume.js) — null while unknown/
   // loading. An in-progress draft (row exists, completed_at still null)
@@ -106,13 +108,23 @@ export function App() {
   // accidentally gate anything on that side.
   const [hasResume, setHasResume] = useState(null);
 
+  // Tracks whether *any* explicit navigation has happened yet this session —
+  // set the instant nav() is first called. Lets the HR auto-redirect effect
+  // below tell "the app just booted straight onto the default screen" apart
+  // from "the app is on 'home' because something (a deliberate nav('home'),
+  // a mid-flow redirect) explicitly put it there" — those must never get
+  // silently overridden.
+  const hasNavigatedRef = useRef(false);
+
   // Third arg is optional: { scrollTo: 'sectionId' } lets a link on any page
   // (e.g. Header's "About Us") land on the homepage already scrolled to a
   // section, instead of just resetting to the top like every other nav does.
   const nav = (s, j, opts) => {
+    hasNavigatedRef.current = true;
     setScreen(s);
     setJob(j ?? null);
     setScrollTarget(opts?.scrollTo ?? null);
+    setStageFilter(opts?.stageFilter ?? null);
     window.scrollTo(0, 0);
     // getInitialScreen() only ever reads ?hr=1 / ?screen= once, on the very
     // first page load — the URL bar otherwise never reflects in-app
@@ -136,12 +148,7 @@ export function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const pendingScreen = params.get('screen');
-    const pendingJobId = params.get('job');
-    if (pendingScreen === 'apply' && pendingJobId) {
-      getJob(pendingJobId).then(({ data }) => {
-        if (data) nav('apply', data);
-      });
-    } else if (pendingScreen === 'my-applications' || pendingScreen === 'resume' || pendingScreen === 'matches') {
+    if (pendingScreen === 'my-applications' || pendingScreen === 'resume' || pendingScreen === 'matches') {
       nav(pendingScreen);
     }
     // Only ever meant to run once, against the URL the page loaded with.
@@ -173,6 +180,40 @@ export function App() {
     }
     getProfile(session.user.id).then(({ data }) => setProfile(data));
   }, [session]);
+
+  // Reopening the tab (or the site) with an already-valid HR session used to
+  // always land on the public homepage — the default landing screen for
+  // everyone — since there's no URL routing remembering "you were in the HR
+  // admin panel." That's not a sign-out, just a confusing default. Sends an
+  // already-authenticated HR account straight to their dashboard instead,
+  // but only the very first time this fires per load (hasNavigatedRef),
+  // and only from the untouched default 'home' screen — a deliberate
+  // nav('home') (e.g. HrShell's "Back to Careers Site, stay signed in as
+  // HR") must still be able to land HR on the public site on purpose.
+  useEffect(() => {
+    if (hasNavigatedRef.current) return;
+    if (screen !== 'home') return;
+    if (!profile || !HR_ROLES.includes(profile.role)) return;
+    nav('hr-dashboard');
+    // Intentionally excludes `screen`/`nav` — this must only ever react to
+    // profile finishing its very first load, not re-run on later navs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
+
+  // The HR login screen (reached via the ?hr=1 bookmark the app itself
+  // tells HR staff to use — see getInitialScreen()) has no legitimate
+  // reason to stay visible once already authenticated as HR: unlike
+  // 'home' above, there's no "view this on purpose while signed in"
+  // feature for it. Without this, hitting that bookmark with a still-valid
+  // session forces typing credentials again for nothing. Runs every time
+  // screen/profile change (not gated to "first load only" like the 'home'
+  // redirect) since there's no explicit-nav case here worth preserving.
+  useEffect(() => {
+    if (screen !== 'hr-login') return;
+    if (!profile || !HR_ROLES.includes(profile.role)) return;
+    nav('hr-dashboard');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, profile]);
 
   // Drives the "resume-first" gate below: an applicant with no resume on
   // file yet gets routed into ResumeForm the moment they'd otherwise land on
@@ -208,7 +249,15 @@ export function App() {
   if (screen === 'hr-forgot-password') return <ForgotPassword nav={nav} variant="hr" />;
   if (screen === 'reset-password') return <ResetPassword nav={nav} />;
   if (screen === 'create') return <CreateAccount job={job} nav={nav} />;
-  if (screen === 'hr-login') return <HrLogin nav={nav} />;
+  if (screen === 'hr-login') {
+    // Avoids a flash of the login form for an already-authenticated HR
+    // visitor — session is known synchronously by this point, but profile
+    // (needed by the auto-redirect effect above to confirm the HR role)
+    // still loads async right after. A signed-out visitor has no session
+    // here and skips straight to the form, same as before.
+    if (session && !profile) return <LoadingScreen />;
+    return <HrLogin nav={nav} />;
+  }
 
   if (screen === 'resume') {
     if (!session) return <SignIn nav={nav} redirectTo="resume" />;
@@ -224,18 +273,11 @@ export function App() {
     return <JobMatches profile={profile} nav={nav} />;
   }
 
-  if (screen === 'apply') {
-    if (!session) return <SignIn job={job} nav={nav} />;
-    if (!profile) return <LoadingScreen />;
-    if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
-    return <ApplicationForm job={job} profile={profile} nav={nav} />;
-  }
-
   if (screen === 'my-applications' || screen === 'interview') {
-    // No job passed to SignIn here (unlike the 'apply' flow) — job holds an
-    // application object on this branch, and SignIn's post-login redirect
-    // assumes any job it's given belongs in the apply flow. redirectTo sends
-    // them back to My Applications instead of the homepage once signed in.
+    // No job passed to SignIn here — job holds an application object on
+    // this branch, not a job posting, and SignIn's post-login redirect
+    // assumes any job it's given is a job posting. redirectTo sends them
+    // back to My Applications instead of the homepage once signed in.
     if (!session) return <SignIn nav={nav} redirectTo="my-applications" />;
     if (!profile) return <LoadingScreen />;
     if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
@@ -243,13 +285,15 @@ export function App() {
     return <MyApplications profile={profile} nav={nav} />;
   }
 
-  if (screen === 'hr-dashboard' || screen === 'hr-jobs' || screen === 'hr-job-form' || screen === 'hr-accounts' || screen === 'hr-applicants' || screen === 'hr-applicant-list' || screen === 'interview-questions') {
+  if (screen === 'hr-dashboard' || screen === 'hr-jobs' || screen === 'hr-job-form' || screen === 'hr-accounts' || screen === 'hr-applicant-list' || screen === 'interview-questions') {
     if (!session) return <HrLogin nav={nav} />;
     if (!profile) return <LoadingScreen />;
     if (!HR_ROLES.includes(profile.role)) return <HrLogin nav={nav} />;
     if (screen === 'hr-job-form') return <JobPostingForm job={job} profile={profile} nav={nav} />;
-    if (screen === 'hr-applicants') return <HrApplicants job={job} nav={nav} profile={profile} />;
-    if (screen === 'hr-applicant-list') return <HrApplicantsList nav={nav} profile={profile} />;
+    // `job` (optional) pre-filters the unified Applicants table to one
+    // posting — every caller that used to nav('hr-applicants', job, opts)
+    // for the old separate per-job page now navs here the same way.
+    if (screen === 'hr-applicant-list') return <HrApplicantsList nav={nav} profile={profile} job={job} stageFilter={stageFilter} />;
     if (screen === 'interview-questions') return <InterviewQuestions profile={profile} nav={nav} />;
     if (screen === 'hr-jobs') return <HrDashboard nav={nav} profile={profile} />;
     if (screen === 'hr-accounts') {
@@ -279,14 +323,11 @@ export function App() {
     return <ResumeForm profile={profile} nav={nav} onResumeSaved={() => setHasResume(true)} />;
   }
 
-  // Once the resume is done, the landing spot is "jobs that match you," not
-  // the marketing homepage — the whole point of resume-first is that the
-  // applicant shouldn't have to go browse for a role themselves. Homepage
-  // stays reachable through other links (e.g. "Open Roles"), just isn't the
-  // default anymore for a signed-in applicant with a finished resume.
-  if (profile?.role === 'applicant' && hasResume === true) {
-    return <JobMatches profile={profile} nav={nav} />;
-  }
+  // Once the resume is done, the applicant lands back on the normal
+  // homepage — matching is now something they trigger themselves ("Match Me
+  // to a Job" in the Explore Open Positions section, see Homepage.jsx)
+  // rather than something forced on every visit. Falls through to the
+  // Homepage return below.
 
   // An HR account browsing the public site is never "the applicant" here —
   // without this, Homepage's account chip would show HR staff's own name/

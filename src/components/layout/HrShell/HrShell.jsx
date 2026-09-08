@@ -123,8 +123,8 @@ function SearchBox({ nav }) {
     return () => clearTimeout(timeout);
   }, [query]);
 
-  const goToJob = (job) => { setQuery(''); setResults(null); nav('hr-applicants', job); };
-  const goToApplicant = (app) => { setQuery(''); setResults(null); if (app.job_postings) nav('hr-applicants', app.job_postings); };
+  const goToJob = (job) => { setQuery(''); setResults(null); nav('hr-applicant-list', job); };
+  const goToApplicant = (app) => { setQuery(''); setResults(null); if (app.job_postings) nav('hr-applicant-list', app.job_postings); };
 
   const hasResults = results && (results.jobs.length > 0 || results.applicants.length > 0);
 
@@ -181,7 +181,7 @@ function NotificationBell({ notifications, nav }) {
 
   const goToCandidate = (n) => {
     setOpen(false);
-    if (n.job) nav('hr-applicants', n.job);
+    if (n.job) nav('hr-applicant-list', n.job);
   };
 
   return (

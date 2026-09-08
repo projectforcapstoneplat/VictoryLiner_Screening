@@ -1,11 +1,9 @@
 // Standalone resume — filled once, before choosing any job, per the
 // "resume-first" flow: sign up -> basic info + resume -> AI shows which open
-// jobs match. Distinct from ApplicationForm.jsx (still used once an
-// applicant picks a specific job from their matches, or applies directly to
-// one via a job posting) — this page doesn't know the target role yet, so
-// none of ApplicationForm's job-category conditionals apply here; every
-// section is shown, and nothing role-specific (license type, etc.) is
-// required to submit.
+// jobs match. This page doesn't know the target role yet, so every section
+// is shown and nothing role-specific (license type, etc.) is required to
+// submit — the one and only apply path is Job Details' Apply Now, which only
+// unlocks once the AI has actually matched this resume to that job.
 //
 // Split into steps (one section group visible at a time, Back/Next between
 // them) rather than one long scroll — the full form has 8 sections, which
@@ -221,15 +219,18 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
       return;
     }
     // Cached match scores were computed against the resume as it was before
-    // this save — clear them so the matches page recomputes fresh against
-    // what was just changed, instead of showing stale scores.
+    // this save — clear them so the next time the applicant asks to be
+    // matched, it recomputes fresh against what was just changed instead of
+    // showing stale scores.
     await clearMyMatches(profile.id);
     // App.jsx's own hasResume only refetches when `profile` itself changes,
     // which this save doesn't trigger — without this, its landing-page gate
     // would still think no resume exists and bounce back here the next time
-    // the applicant navs to 'home' (e.g. the header logo) instead of Matches.
+    // the applicant navs to 'home' instead of through to the homepage.
     onResumeSaved?.();
-    nav('matches');
+    // Matching is applicant-triggered now (the "Match Me to a Job" button on
+    // Homepage), not something shown automatically right after saving.
+    nav('home');
   };
 
   if (checking) {
