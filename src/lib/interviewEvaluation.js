@@ -49,3 +49,22 @@ export async function evaluateResponse(responseId) {
     return { error: 'Could not reach the AI evaluation service. Check your connection and try again.' };
   }
 }
+
+// Recovers an applicant who burned all 3 attempts on a question without
+// ever successfully submitting one (tab closed mid-recording, browser
+// crash with no local recovery available, etc.) — Interview.jsx has no way
+// out of that on its own (attempts are consumed the moment recording
+// starts, not on submit), so this is the only path back in. Relies on
+// interview_responses_update_hr (0028_interview_attempt_guard.sql) — the
+// applicant-side RLS policy intentionally can't do this itself, and a
+// database trigger separately blocks non-HR callers from lowering
+// attempt_count at all (see the same migration).
+export async function resetInterviewAttempts(responseId) {
+  const { data, error } = await supabase
+    .from('interview_responses')
+    .update({ attempt_count: 0 })
+    .eq('id', responseId)
+    .select('*, interview_questions(question_text)')
+    .single();
+  return { data, error };
+}

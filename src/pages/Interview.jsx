@@ -5,18 +5,117 @@ import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
-import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt } from '../lib/interview.js';
+import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
+import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
+import { notifyHrInterviewCompleted } from '../lib/applications.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
+import { MAX_ATTEMPTS } from '../lib/interviewConstants.js';
 
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
-const MAX_ATTEMPTS = 3;
+
+const ARROW_LEFT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>;
+
+const INFO_ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'var(--action-primary-bg)', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const INFO_ICONS = {
+  eye: <svg {...INFO_ICON_PROPS}><path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12z" /><circle cx="12" cy="12" r="3" /></svg>,
+  clock: <svg {...INFO_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>,
+  redo: <svg {...INFO_ICON_PROPS}><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>,
+  camera: <svg {...INFO_ICON_PROPS}><rect x="2" y="6" width="14" height="12" rx="2" /><path d="M16 10l6-3v10l-6-3" /></svg>,
+  check: <svg {...INFO_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></svg>,
+};
+
+// What used to be one small line of prose under the H1 — easy to skim past,
+// easy to be blindsided mid-question by (attempt limits, the hidden-question
+// rule, etc.). Applicants now have to actually pass through this as its own
+// screen before the camera check even loads, see InterviewInstructions below.
+const INTERVIEW_INSTRUCTIONS = [
+  { icon: 'eye', title: 'Questions stay hidden until you click Start', body: 'This keeps things fair for every applicant — nobody gets extra time to prepare or look up an answer beforehand.' },
+  { icon: 'clock', title: '5 seconds to prepare, then 1 minute to answer', body: 'Once you click Start, a short countdown gives you a moment to get ready before recording begins automatically.' },
+  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record — before or after submitting — up to 3 times total for that one question.' },
+  { icon: 'camera', title: "We'll check your camera & mic first", body: "Right after this, you'll confirm HR can actually see and hear you before any question starts recording." },
+  { icon: 'check', title: 'Once every question is submitted, HR reviews it', body: "There's no editing an answer after that — take your time on each take before hitting Submit." },
+];
+
+// A gate, not just information — the applicant has to click through this
+// screen before DeviceCheck even loads, so the rules (hidden questions,
+// timing, attempt limits) are seen once, deliberately, instead of sitting in
+// a paragraph easy to skip past on the way to starting.
+function InterviewInstructions({ onContinue }) {
+  return (
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 5vw, 48px)', display: 'flex', flexDirection: 'column', gap: 26, alignItems: 'center' }}>
+      <div style={{ textAlign: 'center', maxWidth: 520 }}>
+        <strong style={{ fontSize: 'var(--text-xl)' }}>Before You Start — How This Works</strong>
+        <p style={{ margin: '8px 0 0', fontSize: 'var(--text-sm)', opacity: 0.7 }}>
+          Please read through this once — it covers everything you need to know so nothing catches you off guard mid-question.
+        </p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: 560 }}>
+        {INTERVIEW_INSTRUCTIONS.map((item) => (
+          <div key={item.title} style={{ display: 'flex', gap: 16, alignItems: 'flex-start', textAlign: 'left' }}>
+            <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              {INFO_ICONS[item.icon]}
+            </span>
+            <div>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700 }}>{item.title}</div>
+              <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginTop: 2 }}>{item.body}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Button variant="strong" size="md" onClick={onContinue} style={{ width: 'auto', minWidth: 260 }}>I Understand — Continue</Button>
+    </div>
+  );
+}
 
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// "No transcript" reads as a bug (that was the exact complaint that led
+// here) when it could instead say *why* — most of these codes come from
+// Chrome's SpeechRecognition needing to reach Google's servers to work at
+// all, so a blocked/flaky connection is a very plausible real-world cause.
+function transcriptFallbackMessage(errorCode) {
+  if (errorCode === 'network') {
+    return "Couldn't reach the transcript service (needs an internet connection) — doesn't affect your submission.";
+  }
+  if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+    return "Transcript preview needs microphone permission for this site — doesn't affect your submission.";
+  }
+  if (errorCode === 'audio-capture') {
+    return "Couldn't read your microphone for the transcript preview — doesn't affect your submission.";
+  }
+  return "We couldn't make out a clear transcript for this take — doesn't affect your submission.";
+}
+
+// The "get ready" countdown used to be a plain sentence — a ring reads at a
+// glance and actually communicates urgency as it drains, the way a real
+// camera app's countdown does.
+function CountdownRing({ secondsLeft, totalSeconds }) {
+  const size = 108;
+  const stroke = 7;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - secondsLeft / totalSeconds);
+  return (
+    <div className="interview-ring-pulse" style={{ position: 'relative', width: size, height: size }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#fff" strokeWidth={stroke}
+          strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 1s linear' }}
+        />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--text-4xl)', fontWeight: 800, color: '#fff' }}>
+        {secondsLeft}
+      </div>
+    </div>
+  );
 }
 
 // Live mic input level, read via Web Audio's AnalyserNode — moves in
@@ -151,8 +250,8 @@ function DeviceCheck({ onContinue }) {
   };
 
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div>
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(24px, 5vw, 40px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+      <div style={{ textAlign: 'center', maxWidth: 480 }}>
         <strong style={{ fontSize: 'var(--text-lg)' }}>Check Your Camera &amp; Mic</strong>
         <p style={{ margin: '6px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
           Before you start, make sure HR can clearly see and hear you. Face a light source and say something out loud to test your mic.
@@ -160,17 +259,15 @@ function DeviceCheck({ onContinue }) {
       </div>
       {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
       {stream && (
-        <>
-          <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', maxWidth: 400, borderRadius: 8, background: '#000' }} />
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+        <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', textAlign: 'left' }}>
             <div style={{ flex: 1, minWidth: 180 }}><MicLevelMeter stream={stream} /></div>
             <div style={{ flex: 1, minWidth: 180 }}><LightingMeter videoRef={videoRef} /></div>
           </div>
-        </>
+        </div>
       )}
-      <div>
-        <Button variant="strong" size="sm" onClick={handleContinue} disabled={!stream}>Continue to Questions</Button>
-      </div>
+      <Button variant="strong" size="sm" onClick={handleContinue} disabled={!stream}>Continue to Questions</Button>
     </div>
   );
 }
@@ -180,7 +277,7 @@ function DeviceCheck({ onContinue }) {
 // applicant clicks Start — so there's no window to read the question and go
 // search for an answer before recording. Once revealed, a 5-second "get
 // ready" countdown auto-starts recording, which auto-stops after 1 minute.
-function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitted }) {
+function AnswerRecorder({ response, index, total, applicantId, applicationId, onSubmitted }) {
   const [mode, setMode] = useState(response.video_path ? 'submitted' : 'locked');
   const [revealed, setRevealed] = useState(!!response.video_path);
   const [stream, setStream] = useState(null);
@@ -196,10 +293,14 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
   const [translateError, setTranslateError] = useState('');
   const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
   const [recovery, setRecovery] = useState(null);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [transcriptAttempted, setTranscriptAttempted] = useState(false);
+  const [transcriptErrorCode, setTranscriptErrorCode] = useState('');
 
   const videoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -212,6 +313,16 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, [stream]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+    };
+  }, []);
 
   // Checks for a locally-backed-up recording from a session that got cut
   // off (lost connection, crashed tab, sudden power loss) before it could
@@ -240,6 +351,87 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
     return () => window.removeEventListener('beforeunload', handler);
   }, [mode]);
 
+  // Best-effort, in-browser speech-to-text so the applicant can proofread
+  // what they actually said before deciding to submit or re-record —
+  // separate from (and much lower-stakes than) the AI transcript HR sees
+  // later, which comes from a real server-side model. Chrome/Edge only
+  // (same as the video recording requirement below).
+  //
+  // interimResults is on so text appears live rather than waiting on a
+  // "final" chunk that (in continuous mode) sometimes never fires if the
+  // applicant talks straight through without a clean pause — an earlier
+  // version used interimResults:false and could end up showing nothing for
+  // an entire 60s take even though recognition was working. onend also
+  // restarts recognition (it can stop itself early on a brief silence gap
+  // even with continuous:true) so it keeps listening for the full take
+  // instead of going quiet after the first pause.
+  const startSpeechRecognition = () => {
+    setLiveTranscript('');
+    setTranscriptAttempted(false);
+    setTranscriptErrorCode('');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    let finalText = '';
+    let keepAlive = true;
+    // If it's failing instantly on every restart (e.g. no route to the
+    // recognition service at all) this stops it from spinning start/error/
+    // end in a tight loop for the rest of the 60s take.
+    let consecutiveFailures = 0;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognition.onresult = (e) => {
+      consecutiveFailures = 0;
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const chunk = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += `${chunk} `;
+        else interim += chunk;
+      }
+      setLiveTranscript(`${finalText}${interim}`.trim());
+    };
+    recognition.onerror = (e) => {
+      // Surfaced in the console (not to the applicant directly) so this is
+      // actually diagnosable instead of a silent black box — 'network' most
+      // likely means the browser couldn't reach Chrome's speech service at
+      // all (this feature calls out to Google's servers, it isn't local).
+      console.warn('[interview transcript] speech recognition error:', e.error);
+      setTranscriptErrorCode(e.error);
+      consecutiveFailures += 1;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'language-not-supported' || consecutiveFailures >= 5) {
+        keepAlive = false;
+      }
+    };
+    recognition.onend = () => {
+      if (keepAlive && recognitionRef.current === recognition) {
+        try {
+          recognition.start();
+        } catch {
+          /* already running */
+        }
+      }
+    };
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+      setTranscriptAttempted(true);
+    } catch {
+      recognitionRef.current = null;
+    }
+  };
+
+  const stopSpeechRecognition = () => {
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try {
+      recognition?.stop();
+    } catch {
+      /* already stopped */
+    }
+  };
+
   const startRecording = () => {
     chunksRef.current = [];
     let recorder;
@@ -265,11 +457,13 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
       setMode('preview');
       stream.getTracks().forEach((t) => t.stop());
       setStream(null);
+      stopSpeechRecognition();
     };
     mediaRecorderRef.current = recorder;
     recorder.start(1000);
     setRecordSecondsLeft(RECORD_SECONDS);
     setMode('recording');
+    startSpeechRecognition();
 
     const nextAttempt = attemptCount + 1;
     setAttemptCount(nextAttempt);
@@ -385,7 +579,7 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
     <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>
-          Question {index + 1} of 3{revealed && ` — Attempt ${Math.min(attemptCount, MAX_ATTEMPTS)} of ${MAX_ATTEMPTS}`}
+          Question {index + 1} of {total}{revealed && ` — Attempt ${Math.min(attemptCount, MAX_ATTEMPTS)} of ${MAX_ATTEMPTS}`}
         </div>
         {revealed && (
           <Button variant="ghost" size="sm" onClick={handleTranslate} disabled={translating}>
@@ -423,7 +617,7 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
           </>
         )
       ) : (
-        <>
+        <div className="fade-in-up">
           <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
           {translateError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 8 }}>{translateError}</div>}
           {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
@@ -440,30 +634,51 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
           )}
 
           {(mode === 'countdown' || mode === 'recording') && (
-            <div>
-              <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', maxWidth: 480, borderRadius: 8, background: '#000' }} />
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ maxWidth: 480, margin: '0 auto' }}>
+              <div style={{ position: 'relative' }}>
+                <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000', display: 'block' }} />
                 {mode === 'countdown' && (
-                  <span style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--action-primary-bg)' }}>
-                    Get ready… recording starts in {readySecondsLeft}s
-                  </span>
+                  <div className="fade-in-up" style={{
+                    position: 'absolute', inset: 0, borderRadius: 8, background: 'rgba(15,10,10,0.55)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+                  }}>
+                    <CountdownRing secondsLeft={readySecondsLeft} totalSeconds={READY_SECONDS} />
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: '#fff' }}>Get ready…</span>
+                  </div>
                 )}
-                {mode === 'recording' && (
-                  <>
+              </div>
+              {mode === 'recording' && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--red-700)' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red-700)' }} />
+                      <span className="recording-dot-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red-700)' }} />
                       Recording — {formatTime(recordSecondsLeft)} left
                     </span>
                     <Button variant="strong" size="sm" onClick={stopRecording}>■ Stop</Button>
-                  </>
-                )}
-              </div>
+                  </div>
+                  <div style={{ marginTop: 8, height: 5, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${(recordSecondsLeft / RECORD_SECONDS) * 100}%`, background: 'var(--red-700)', transition: 'width 1s linear' }} />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {mode === 'preview' && recordedBlob && (
-            <div>
-              <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', maxWidth: 480, borderRadius: 8, background: '#000' }} />
+            <div style={{ maxWidth: 480, margin: '0 auto' }}>
+              <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+              {transcriptAttempted && (
+                <div style={{ marginTop: 10, background: 'var(--surface-page-alt)', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, opacity: 0.65 }}>
+                    What we heard (auto-generated — for your reference only, not what HR sees)
+                  </div>
+                  {liveTranscript ? (
+                    <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', fontStyle: 'italic' }}>&ldquo;{liveTranscript}&rdquo;</p>
+                  ) : (
+                    <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.6 }}>{transcriptFallbackMessage(transcriptErrorCode)}</p>
+                  )}
+                </div>
+              )}
               <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
                 {atAttemptLimit ? (
@@ -474,15 +689,37 @@ function AnswerRecorder({ response, index, applicantId, applicationId, onSubmitt
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
+  );
+}
+
+// Used to be a single plain red sentence tacked onto the bottom of the
+// question list — the actual "you're finished" payoff moment deserves more
+// than that, same treatment as the app's other empty/complete states
+// (e.g. JobMatches.jsx's "no matches" card).
+function InterviewComplete({ nav }) {
+  return (
+    <Reveal className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '44px 32px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+      <div className="chip-pop" style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary-bg)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m5 13 4 4L19 7" />
+        </svg>
+      </div>
+      <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, margin: 0 }}>You're All Done!</h2>
+      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, maxWidth: 420, margin: 0 }}>
+        Every question has been answered and submitted. HR will review your interview along with your application — no further action needed from you.
+      </p>
+      <Button variant="strong" size="sm" onClick={() => nav('my-applications')}>Back to My Applications</Button>
+    </Reveal>
   );
 }
 
 export function Interview({ application, profile, nav }) {
   const [responses, setResponses] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [instructionsAcknowledged, setInstructionsAcknowledged] = useState(false);
   const [deviceCheckPassed, setDeviceCheckPassed] = useState(false);
 
   useEffect(() => {
@@ -502,16 +739,34 @@ export function Interview({ application, profile, nav }) {
   }, [application]);
 
   const handleSubmitted = (updated) => {
-    setResponses((rs) => rs.map((r) => (r.question_id === updated.question_id ? updated : r)));
+    setResponses((rs) => {
+      const next = rs.map((r) => (r.question_id === updated.question_id ? updated : r));
+      if (justCompletedInterview(rs, next)) notifyHrInterviewCompleted(application.id);
+      return next;
+    });
   };
+
+  const backButton = (
+    <button
+      onClick={() => nav('my-applications')}
+      className="btn-animate"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 7, width: 'fit-content', margin: '0 auto 20px',
+        padding: '9px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', fontWeight: 700,
+      }}
+    >
+      {ARROW_LEFT_ICON} Back to My Applications
+    </button>
+  );
 
   if (!application) {
     return (
       <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
         <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
-        <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
+        <section style={{ maxWidth: 1000, margin: '60px auto', padding: '0 20px', textAlign: 'center' }}>
+          {backButton}
           <p>No application selected.</p>
-          <Button variant="ghost" size="sm" onClick={() => nav('my-applications')}>Back to My Applications</Button>
         </section>
       </div>
     );
@@ -522,37 +777,45 @@ export function Interview({ application, profile, nav }) {
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
-      <section style={{ maxWidth: 900, margin: '60px auto', padding: '0 20px' }}>
-        <div onClick={() => nav('my-applications')} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', textDecoration: 'underline', marginBottom: 20 }}>&larr; Back to My Applications</div>
-        <div style={{ marginBottom: 40, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={3} /></div>
-        <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>Video Interview — {application.job_postings?.title}</h1>
-        <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>
-          Each question stays hidden until you click Start. You'll get 5 seconds to prepare, then 1 minute to answer — you can re-record up to {MAX_ATTEMPTS} times per question, before or after submitting.
-        </p>
+      <section style={{ maxWidth: 1000, margin: '60px auto', padding: '0 20px' }}>
+        {backButton}
+        {/* Mirrors MyApplications.jsx's getStepIndex exactly: still on
+            "Video Screening" (index 2) until every question actually has a
+            recorded answer, only crossing into "Reviewing" (index 3) once
+            allSubmitted — this page had been hardcoded to 3 for the whole
+            duration, showing "Reviewing" as already current before the
+            applicant had recorded a single answer. */}
+        <div style={{ marginBottom: 40, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={allSubmitted ? 3 : 2} /></div>
+        <div style={{ textAlign: 'center', marginBottom: 30 }}>
+          <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>Video Interview — {application.job_postings?.title}</h1>
+          <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0 }}>Take your time — everything you need to know is on the next screen.</p>
+        </div>
 
         {loadError && <p style={{ color: 'var(--red-700)' }}>{loadError}</p>}
 
         {responses === null ? (
-          <p>Loading your questions…</p>
+          <p style={{ textAlign: 'center' }}>Loading your questions…</p>
         ) : responses.length === 0 ? (
-          <p>Interview questions haven't been set up for this role's category yet — check back later.</p>
+          <p style={{ textAlign: 'center' }}>Interview questions haven't been set up for this role's category yet — check back later.</p>
+        ) : !allSubmitted && !instructionsAcknowledged ? (
+          <Reveal><InterviewInstructions onContinue={() => setInstructionsAcknowledged(true)} /></Reveal>
         ) : !allSubmitted && !deviceCheckPassed ? (
-          <DeviceCheck onContinue={() => setDeviceCheckPassed(true)} />
+          <Reveal><DeviceCheck onContinue={() => setDeviceCheckPassed(true)} /></Reveal>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {responses.map((r, i) => (
-              <AnswerRecorder
-                key={r.id}
-                response={r}
-                index={i}
-                applicantId={profile.id}
-                applicationId={application.id}
-                onSubmitted={handleSubmitted}
-              />
+              <Reveal key={r.id} delay={Math.min(i * 0.08, 0.32)}>
+                <AnswerRecorder
+                  response={r}
+                  index={i}
+                  total={responses.length}
+                  applicantId={profile.id}
+                  applicationId={application.id}
+                  onSubmitted={handleSubmitted}
+                />
+              </Reveal>
             ))}
-            {allSubmitted && (
-              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>All questions answered — HR will review your interview along with your application.</p>
-            )}
+            {allSubmitted && <InterviewComplete nav={nav} />}
           </div>
         )}
       </section>

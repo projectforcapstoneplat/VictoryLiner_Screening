@@ -4,11 +4,11 @@ const DEFAULT_QUESTIONS_PER_APPLICANT = 3;
 
 // Ensures this application already has its interview questions assigned —
 // idempotent, so re-visiting the interview page never reshuffles an
-// in-progress or already-submitted interview. First visit picks the first
-// N (by creation order) questions from the job's category question bank —
-// N is HR Head's configured interview_question_count (see
-// src/lib/screeningSettings.js), passed in by the caller; falls back to 3
-// if not given so existing callers don't break.
+// in-progress or already-submitted interview. First visit randomly picks N
+// questions from the job's category question bank — N is HR Head's
+// configured interview_question_count (see src/lib/screeningSettings.js),
+// passed in by the caller; falls back to 3 if not given so existing callers
+// don't break.
 export async function ensureAssignedResponses(application, jobCategory, questionCount = DEFAULT_QUESTIONS_PER_APPLICANT) {
   const { data: existing, error: existingError } = await supabase
     .from('interview_responses')
@@ -25,22 +25,36 @@ export async function ensureAssignedResponses(application, jobCategory, question
     .order('created_at', { ascending: true });
   if (poolError) return { error: poolError };
 
-  // Dedupe by question text before taking the first 3 — the bank can end up
-  // with accidental duplicate entries (e.g. HR double-submitting the same
-  // question), and an applicant should never be assigned the same question
-  // twice just because two rows happen to share its text.
+  // Dedupe by question text — the bank can end up with accidental duplicate
+  // entries (e.g. HR double-submitting the same question), and an applicant
+  // should never be assigned the same question twice just because two rows
+  // happen to share its text.
   const seenText = new Set();
-  const pool = [];
+  const dedupedPool = [];
   for (const q of candidates) {
     const key = q.question_text.trim().toLowerCase();
     if (seenText.has(key)) continue;
     seenText.add(key);
-    pool.push(q);
-    if (pool.length === questionCount) break;
+    dedupedPool.push(q);
   }
-  if (!pool.length) return { data: [] };
+  if (!dedupedPool.length) return { data: [] };
 
-  const rows = pool.map((q) => ({ application_id: application.id, question_id: q.id }));
+  // Randomly sample N from the full pool instead of always the first N by
+  // creation date — every applicant in a category used to get the exact
+  // same questions in the exact same order, forever, which undermines the
+  // "hidden until you start" fairness rule the moment two applicants can
+  // compare notes (and they will). A no-op if the pool has <= N questions —
+  // there's nothing to vary if HR hasn't written more than what's actually
+  // asked (see InterviewQuestions.jsx's own hint about keeping the bank
+  // bigger than the configured count).
+  const pool = [...dedupedPool];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const selected = pool.slice(0, questionCount);
+
+  const rows = selected.map((q) => ({ application_id: application.id, question_id: q.id }));
   const { data: inserted, error: insertError } = await supabase
     .from('interview_responses')
     .insert(rows)
@@ -125,6 +139,19 @@ export async function uploadResponseVideo({ applicantId, applicationId, question
     .select('*, interview_questions(question_text)')
     .single();
   return { data, error };
+}
+
+// True only on the exact update that takes a response set from "not every
+// question answered yet" to "all answered" — compares the pre-update
+// snapshot against the post-update one rather than just checking whether
+// `next` is complete, so calling this again later (re-recording an already-
+// answered question) never reports true a second time. Pulled out as its
+// own pure function so the HR-notification trigger point in Interview.jsx
+// is unit-testable without needing a real camera/MediaRecorder.
+export function justCompletedInterview(prevResponses, nextResponses) {
+  const wasComplete = prevResponses.length > 0 && prevResponses.every((r) => r.video_path);
+  const isComplete = nextResponses.length > 0 && nextResponses.every((r) => r.video_path);
+  return !wasComplete && isComplete;
 }
 
 // Taglish translation for one question, on demand — nothing is persisted,

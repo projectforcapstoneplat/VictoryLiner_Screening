@@ -6,10 +6,10 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
 import { listPublishedJobs } from '../lib/jobs.js';
+import { deadlineInfo } from '../lib/deadline.js';
 import { useInView } from '../lib/useInView.js';
 import { useCountUp } from '../lib/useCountUp.js';
 import { listJobCategories } from '../lib/jobCategories.js';
-import { signOut } from '../lib/auth.js';
 import heroBase from '../assets/hero-bus-base.jpg';
 import searchIconOutline from '../assets/search-icon-outline.svg';
 
@@ -33,7 +33,7 @@ const PROCESS_STEPS = [
 const FEATURES = [
   { title: 'Fully Online Process', description: 'Apply and interview end-to-end from your phone or computer.' },
   { title: 'No Terminal Visit Required', description: 'Complete the entire initial screening remotely, at your own pace.' },
-  { title: 'Pick Up Where You Left Off', description: 'Come back anytime — your application and interview progress are saved.' },
+  { title: 'Pick Up Where You Left Off', description: 'Come back anytime. Your application and interview progress are saved.' },
 ];
 
 const ABOUT_ICON_PROPS = { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'var(--action-primary-bg)', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -44,7 +44,7 @@ const ABOUT_POINTS = [
     icon: <svg {...ABOUT_ICON_PROPS}><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /><circle cx="12" cy="12" r="9" /></svg>,
   },
   {
-    title: 'Built By The People Who Drive It', description: 'Behind every route is a team of drivers, conductors, terminal staff, and mechanics — the people this careers site exists to hire and support.',
+    title: 'Built By The People Who Drive It', description: 'Behind every route is a team of drivers, conductors, terminal staff, and mechanics: the people this careers site exists to hire and support.',
     icon: <svg {...ABOUT_ICON_PROPS}><circle cx="9" cy="8" r="3.4" /><path d="M2.5 20c1-3.6 3.6-5.6 6.5-5.6s5.5 2 6.5 5.6" /><circle cx="18" cy="9" r="2.6" /><path d="M15 20c.6-2.4 2-3.9 3-3.9" /></svg>,
   },
   {
@@ -97,7 +97,34 @@ function FeatureItem({ index, title, description }) {
   );
 }
 
-function OpenRoleCard({ index, job, onView, onApply }) {
+// Replaces the search + job grid for a signed-in applicant (who by
+// definition already has a completed resume — see App.jsx's gate) — rather
+// than making them browse and self-assess fit against every posting, this
+// is the entry point into the AI matching flow (JobMatches.jsx), which they
+// now trigger on demand instead of it running automatically for them.
+function MatchMeCard({ nav }) {
+  return (
+    <Reveal className="hover-lift" style={{
+      background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)',
+      padding: '56px 40px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+    }}>
+      <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary-bg)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2l2.6 6.6L21 9.3l-5 4.5 1.4 7.2L12 17.5 6.6 21l1.4-7.2-5-4.5 6.4-.7z" />
+        </svg>
+      </div>
+      <div>
+        <strong style={{ fontSize: 'var(--text-lg)', display: 'block', marginBottom: 6 }}>Skip the browsing</strong>
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.7, maxWidth: 420 }}>
+          Your resume's already on file. Let our AI compare it against every open position and show you which ones actually fit.
+        </p>
+      </div>
+      <Button variant="strong" size="md" onClick={() => nav('matches')}>Match Me to a Job</Button>
+    </Reveal>
+  );
+}
+
+function OpenRoleCard({ index, job, onView }) {
   return (
     <Reveal
       delay={index * 0.1}
@@ -117,8 +144,7 @@ function OpenRoleCard({ index, job, onView, onApply }) {
       </div>
       <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7 }}>{[job.category, job.location].filter(Boolean).join(' · ')}</div>
       <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-        <Button variant="ghost" size="sm" onClick={onView} style={{ flex: 1 }}>View Details</Button>
-        <Button variant="strong" size="sm" onClick={onApply} style={{ flex: 1 }}>Quick Apply</Button>
+        <Button variant="strong" size="sm" onClick={onView} style={{ flex: 1 }}>View Details</Button>
       </div>
     </Reveal>
   );
@@ -152,7 +178,7 @@ function StatsStrip({ openPositions, jobsLoaded }) {
   const stats = [
     { value: openPositions, suffix: '+', label: 'Open Positions Right Now', icon: <svg {...STAT_ICON_PROPS}><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg> },
     { value: 3, suffix: '', label: 'Simple Steps to Apply', icon: <svg {...STAT_ICON_PROPS}><path d="M4 20l4-4 4 4M12 12l4-4 4 4" /><path d="M4 16v4h4M12 8v4h4" /></svg> },
-    { value: 100, suffix: '%', label: 'Online — Apply From Anywhere', icon: <svg {...STAT_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg> },
+    { value: 100, suffix: '%', label: 'Apply Online From Anywhere', icon: <svg {...STAT_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg> },
   ];
   return (
     <section ref={ref} style={{ maxWidth: 1066, margin: '70px auto 0', padding: '0 20px' }}>
@@ -169,7 +195,7 @@ function AboutSection() {
       <div style={{ textAlign: 'center', maxWidth: 640, margin: '0 auto 44px' }}>
         <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 14px' }}>About Victory Liner</Reveal>
         <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.75, margin: 0, lineHeight: 1.6 }}>
-          Connecting Filipino communities, one journey at a time — and now hiring the people who make every trip possible.
+          Connecting Filipino communities, one journey at a time. Now hiring the people who make every trip possible.
         </Reveal>
       </div>
       <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
@@ -182,47 +208,6 @@ function AboutSection() {
         ))}
       </div>
     </section>
-  );
-}
-
-// Signed-in indicator — an avatar-initial chip + icon-only sign-out button,
-// sitting inside the header pill itself (via Header's `accessory` slot)
-// rather than as a separate plain-text row floating underneath it.
-function AccountChip({ profile, onSignOut }) {
-  const name = profile.full_name || profile.email || 'Account';
-  const initial = name.trim().charAt(0).toUpperCase();
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-card)',
-      borderRadius: 999, padding: '5px 6px 5px 5px', boxShadow: 'var(--shadow-hairline)',
-    }}>
-      <div style={{
-        width: 28, height: 28, borderRadius: '50%', background: 'var(--action-primary-bg)', color: '#fff',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 'var(--text-xs)', flexShrink: 0,
-      }}>
-        {initial}
-      </div>
-      <span style={{
-        fontSize: 'var(--text-xs)', fontWeight: 600, maxWidth: 140, overflow: 'hidden',
-        textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)',
-      }}>
-        {name}
-      </span>
-      <button
-        onClick={onSignOut}
-        title="Sign Out"
-        aria-label="Sign Out"
-        style={{
-          width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer', flexShrink: 0,
-          background: 'var(--surface-page-alt)', color: 'var(--action-primary-bg)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-      </button>
-    </div>
   );
 }
 
@@ -259,7 +244,11 @@ export function Homepage({ nav, profile, scrollTarget }) {
 
   useEffect(() => {
     listPublishedJobs().then(({ data }) => {
-      setJobs(data);
+      // Same reasoning as JobFilter.jsx — a job past its own application
+      // deadline has nothing left for an applicant to do, so it's filtered
+      // out here rather than shown with a still-clickable "View Details"
+      // that just leads to a dead-end "Applications Closed" page.
+      setJobs((data || []).filter((j) => !deadlineInfo(j.application_deadline)?.closed));
       setJobsLoaded(true);
     });
     listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
@@ -294,22 +283,23 @@ export function Homepage({ nav, profile, scrollTarget }) {
     return () => clearTimeout(id);
   }, [scrollTarget]);
 
-  // Same ordering fix as HrShell.jsx's handleSignOut — nav first, then
-  // signOut(), so a gated screen never re-renders mid-signOut against an
-  // already-null session while `screen` hasn't caught up yet.
-  const handleSignOut = () => {
-    nav('home');
-    signOut();
-  };
-
   const [connectorRef, connectorInView] = useInView({ threshold: 0.4 });
 
+  // "Apply Now" used to just point at the same full listing as "Open Roles"
+  // — a generic browse-it-yourself CTA that no longer matches how applying
+  // actually works here. It's now the same "Match Me to a Job" action the
+  // homepage's own Explore Open Positions section leads with, so the navbar
+  // and the page content say the same thing. "Open Roles" stays as the
+  // manual-browse alternative (full transparency of every posting, not just
+  // ones that scored well) — renamed so the two aren't easily confused for
+  // the same action.
   const navLinks = [
-    { label: 'Open Roles', onClick: () => nav('filter') },
+    { label: 'Browse All Roles', onClick: () => nav('filter') },
     { label: 'How It Works', onClick: () => scrollTo('process') },
     { label: 'Track Application', onClick: () => nav('my-applications') },
+    { label: 'My Resume', onClick: () => nav('my-resume') },
     { label: 'About Us', onClick: () => scrollTo('about') },
-    { label: 'Apply Now', onClick: () => nav('filter'), strong: true },
+    { label: 'Match Me to a Job', onClick: () => nav('matches'), strong: true },
   ];
 
   return (
@@ -326,7 +316,8 @@ export function Homepage({ nav, profile, scrollTarget }) {
           links={navLinks}
           onLogoClick={() => nav('home')}
           compact={scrolled}
-          accessory={profile ? <AccountChip profile={profile} onSignOut={handleSignOut} /> : null}
+          nav={nav}
+          profile={profile}
         />
       </div>
 
@@ -338,7 +329,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
             Drive Your Career Forward with Victory Liner
           </h1>
           <p className="fade-in-up" style={{ fontSize: 'var(--text-lg)', fontWeight: 300, opacity: 0.9, margin: '0 0 32px', animationDelay: '0.12s' }}>
-            Apply and complete your initial interview 100% online — anytime, anywhere.
+            Apply and complete your initial interview 100% online, anytime, anywhere.
           </p>
           <div className="fade-in-up" style={{ display: 'flex', gap: 16, animationDelay: '0.24s' }}>
             <Button variant="strong" size="md" onClick={() => nav('filter')}>View Open Positions</Button>
@@ -403,33 +394,45 @@ export function Homepage({ nav, profile, scrollTarget }) {
       <CategoryMarquee categories={categories} />
 
       <section style={{ maxWidth: 1066, margin: '90px auto 0', padding: '0 20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
-          <div>
-            <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
-            <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>Find a role that fits your skills and ambition.</Reveal>
-          </div>
-          <div style={{ background: 'var(--surface-search)', borderRadius: 'var(--radius-2xl)', height: 56, minWidth: 280, display: 'flex', alignItems: 'center', padding: '0 20px', boxShadow: 'var(--shadow-hairline)' }}>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search job title or category"
-              style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)' }}
-            />
-            <img src={searchIconOutline} alt="" style={{ width: 20, opacity: 0.7 }} />
-          </div>
-        </div>
-        {displayedJobs.length === 0 ? (
-          <p style={{ opacity: 0.7 }}>No open positions match your search right now.</p>
+        {profile ? (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 30 }}>
+              <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
+              <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>No need to browse. We'll find the roles that fit you.</Reveal>
+            </div>
+            <MatchMeCard nav={nav} />
+          </>
         ) : (
-          <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
-            {displayedJobs.map((j, i) => (
-              <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} onApply={() => nav('apply', j)} />
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
+              <div>
+                <Reveal as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-4xl)', margin: '0 0 8px' }}>Explore Open Positions</Reveal>
+                <Reveal as="p" delay={0.08} style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0 }}>Find a role that fits your skills and ambition.</Reveal>
+              </div>
+              <div style={{ background: 'var(--surface-search)', borderRadius: 'var(--radius-2xl)', height: 56, minWidth: 280, display: 'flex', alignItems: 'center', padding: '0 20px', boxShadow: 'var(--shadow-hairline)' }}>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search job title or category"
+                  style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)' }}
+                />
+                <img src={searchIconOutline} alt="" style={{ width: 20, opacity: 0.7 }} />
+              </div>
+            </div>
+            {displayedJobs.length === 0 ? (
+              <p style={{ opacity: 0.7 }}>No open positions match your search right now.</p>
+            ) : (
+              <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
+                {displayedJobs.map((j, i) => (
+                  <OpenRoleCard key={j.id} index={i} job={j} onView={() => nav('details', j)} />
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 30, textAlign: 'center' }}>
+              <Button variant="ghost" size="sm" onClick={() => nav('filter')}>View All Open Positions</Button>
+            </div>
+          </>
         )}
-        <div style={{ marginTop: 30, textAlign: 'center' }}>
-          <Button variant="ghost" size="sm" onClick={() => nav('filter')}>View All Open Positions</Button>
-        </div>
       </section>
 
       <div style={{ position: 'relative', overflow: 'hidden' }}>

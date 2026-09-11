@@ -12,6 +12,7 @@ import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getPersonnelOverview } from '../lib/reports.js';
 import { updateApplicationStatus, notifyApplicantStatusChange } from '../lib/applications.js';
 import { getSignedVideoUrl } from '../lib/interviewEvaluation.js';
+import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -206,7 +207,7 @@ function RecentApplicationsTable({ recent, nav }) {
                       <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: meta.bg, color: meta.fg }}>{meta.label}</span>
                     </td>
                     <td style={{ padding: '12px 0', textAlign: 'right' }}>
-                      <Button variant="ghost" size="sm" onClick={() => r.job && nav('hr-applicants', r.job)}>View</Button>
+                      <Button variant="ghost" size="sm" onClick={() => r.job && nav('hr-applicant-list', r.job)}>View</Button>
                     </td>
                   </tr>
                 );
@@ -222,6 +223,15 @@ function RecentApplicationsTable({ recent, nav }) {
 export function HrPersonnelDashboard({ nav, profile }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
+
+  // Live clock for the header — ticks every 30s, which is plenty for a
+  // "what day/time is it right now" glance and cheap enough not to bother
+  // re-rendering the whole dashboard more often than that.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   const load = () => {
     getPersonnelOverview().then(({ data, error: err }) => {
@@ -240,8 +250,16 @@ export function HrPersonnelDashboard({ nav, profile }) {
     <HrShell active="hr-dashboard" nav={nav} profile={profile} notifications={report?.queue || []}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         <Reveal>
-          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Dashboard</h1>
-          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>Welcome back, {profile?.full_name || profile?.email}.</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Dashboard</h1>
+              <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>Welcome back, {profile?.full_name || profile?.email}.</p>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 'var(--text-sm)' }}>
+              <div style={{ fontWeight: 700 }}>{now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+              <div style={{ opacity: 0.65 }}>{now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</div>
+            </div>
+          </div>
         </Reveal>
 
         {error && <p style={{ color: 'var(--red-700)' }}>{error}</p>}
@@ -258,7 +276,7 @@ export function HrPersonnelDashboard({ nav, profile }) {
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
               <ScreeningQueue queue={report.queue} onDecide={handleDecide} profile={profile} />
-              <SectionCard title="Live Pipeline Stages" subtitle="Top job postings by applicant volume" delay={0.06}>
+              <SectionCard title="Hiring Progress" subtitle="Top job postings by applicant volume" delay={0.06}>
                 {report.jobBreakdown.length === 0 ? (
                   <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications yet.</p>
                 ) : (
@@ -268,17 +286,26 @@ export function HrPersonnelDashboard({ nav, profile }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                           <strong style={{ fontSize: 'var(--text-sm)' }}>{job.title}</strong>
                           <span
-                            onClick={() => nav('hr-applicants', job)}
+                            onClick={() => nav('hr-applicant-list', job)}
                             style={{ fontSize: 'var(--text-xs)', color: 'var(--text-link)', cursor: 'pointer' }}
                           >
                             View all ({applicantCount})
                           </span>
                         </div>
-                        <PipelineBar pipeline={pipeline} />
+                        <PipelineBar pipeline={pipeline} job={job} nav={nav} />
                       </div>
                     ))}
                   </div>
                 )}
+              </SectionCard>
+            </div>
+
+            <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
+              <SectionCard title="Resume Score Distribution" subtitle="Where your current applicant pool clusters" delay={0.06}>
+                <HorizontalBarChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
+              </SectionCard>
+              <SectionCard title="Interview Sentiment" subtitle="NLP sentiment across all evaluated answers" delay={0.08}>
+                <SentimentBar sentiment={report.sentiment} />
               </SectionCard>
             </div>
 

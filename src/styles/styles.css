@@ -134,6 +134,20 @@ a {
   100% { transform: translate(-16px, -12px) scale(1.7); opacity: 0; }
 }
 
+/* FormError (src/components/feedback/FormError) — drops in, then settles
+   with a small shake, so a rejected sign-in/sign-up actually draws the eye
+   instead of reading as a quiet line of red text. One combined keyframe
+   (rather than two separate `transform`-animating classes) since a second
+   animation on the same property would just override the first, not blend. */
+@keyframes formErrorIn {
+  0% { opacity: 0; transform: translateY(-6px); }
+  40% { opacity: 1; transform: translateY(0) translateX(0); }
+  55% { transform: translateY(0) translateX(-4px); }
+  70% { transform: translateY(0) translateX(4px); }
+  85% { transform: translateY(0) translateX(-2px); }
+  100% { transform: translateY(0) translateX(0); }
+}
+
 /* Stepper's driving bus (see src/components/navigation/Stepper) — position is
    animated inline via `left`; these add the idle "engine running" motion so
    it reads as alive even while parked at the current step. */
@@ -188,8 +202,21 @@ a {
   animation: chipPopIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
+/* Interview.jsx's "get ready" countdown ring and the recording indicator
+   dot — a subtle breathing pulse so both read as "live" rather than static. */
+.interview-ring-pulse {
+  animation: pulseScale 1.4s ease-in-out infinite;
+}
+.recording-dot-pulse {
+  animation: pulseScale 1s ease-in-out infinite;
+}
+
 .fade-in-up {
   animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.form-error {
+  animation: formErrorIn 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 /* Scroll-triggered reveal (see src/components/motion/Reveal) — starts hidden,
@@ -204,12 +231,30 @@ a {
   transform: translateY(0);
 }
 
+.app-footer-link {
+  transition: color 0.18s ease;
+}
+.app-footer-link:hover {
+  color: var(--text-onfooter) !important;
+}
+
 .hover-lift {
   transition: transform 0.22s ease, box-shadow 0.22s ease;
 }
 .hover-lift:hover {
   transform: translateY(-6px);
   box-shadow: 0 16px 28px rgba(0, 0, 0, 0.14);
+}
+
+/* A calmer lift than .hover-lift — for dense list rows (HrDashboard.jsx's
+   Job Openings cards) stacked close together, where a -6px jump would make
+   neighboring rows visually collide. */
+.hr-job-card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.hr-job-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
 }
 
 .btn-animate {
@@ -254,7 +299,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom {
+  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom, .form-error {
     animation: none !important;
     transition: none !important;
   }
@@ -270,11 +315,14 @@ a {
   .job-icon-badge {
     transition: none !important;
   }
-  .stepper-bus, .stepper-wheel, .stepper-dot-current, .chip-pop, .stepper-smoke {
+  .stepper-bus, .stepper-wheel, .stepper-dot-current, .chip-pop, .stepper-smoke, .interview-ring-pulse, .recording-dot-pulse {
     animation: none !important;
   }
   .float-badge, .scroll-chevron, .marquee-track, .bg-blob {
     animation: none !important;
+  }
+  .auth-panel-image, .auth-panel-form {
+    transition: none !important;
   }
 }
 
@@ -287,6 +335,16 @@ a {
    stylesheet rule can win over an inline style, which is what's needed to
    override those pages' hardcoded desktop padding/widths.
    ------------------------------------------------------------------- */
+/* Sign In / Create Account's branded split layout needs real width for
+   both the image panel and the form to breathe — collapses to just the
+   form (full width) below this, well before the general 640px breakpoint
+   below would otherwise squeeze both into an unreadable sliver each. */
+@media (max-width: 880px) {
+  .auth-split-image {
+    display: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .page-header-wrap {
     padding: 20px 16px 0 !important;
@@ -303,11 +361,95 @@ a {
   .app-header-nav {
     display: none !important;
   }
+  /* Tightened from the default 10px — the notification bell (added after
+     this row was first tuned) pushed the icon count from 3 up to 4
+     (theme toggle, bell, account chip, hamburger), eating back the width
+     the account-chip-name fix below had freed up and clipping "Victory
+     Liner" again on genuinely narrow phones — still clipped even after
+     this at common 360px-wide Android widths, so the icons themselves also
+     shrink below, not just the gaps between them. */
   .app-header-mobile-controls {
     display: flex !important;
+    gap: 4px !important;
   }
-  .app-footer {
-    padding: 36px 24px !important;
+  .app-header-accessory {
+    gap: 4px !important;
+  }
+  /* Every circular icon button in the mobile row (theme toggle, bell,
+     hamburger) — 38px each was sized for a desktop pill with room to
+     spare; four of them plus the account chip left no real budget for the
+     logo text next to them. */
+  .app-header-icon-btn {
+    width: 32px !important;
+    height: 32px !important;
+  }
+  .app-header-chip {
+    gap: 5px !important;
+    padding: 3px 4px 3px 3px !important;
+  }
+  .app-header-chip-avatar {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  .app-header-chip-signout {
+    width: 20px !important;
+    height: 20px !important;
+  }
+  /* Fixed at 300px wide, anchored to the bell icon's own right edge — fine
+     on desktop, but the bell sits well left of the actual screen edge once
+     the account chip and hamburger are also in the row, so the panel ran
+     off the left side of the viewport on narrow phones. Anchoring to the
+     viewport itself (fixed, with side margins) instead of the bell fixes
+     that regardless of where the bell ends up sitting in the row. */
+  .app-header-notif-dropdown {
+    position: fixed !important;
+    top: 74px !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+  }
+  /* The signed-in account chip's name/email text was the single biggest
+     space hog in the mobile header — combined with the theme toggle,
+     hamburger button, and the logo lockup all fighting for the same narrow
+     row, it left no room for "Victory Liner" and the two visually
+     overlapped. Dropping the name (avatar + sign-out still make the chip
+     legible and functional) frees enough width that the logo no longer
+     needs to shrink below its content size, which is what caused the
+     overlap in the first place — a flex item can shrink its box without
+     its nowrap text shrinking with it, so the text just spilled outward
+     into whatever sat next to it. */
+  .account-chip-name {
+    display: none !important;
+  }
+  /* Belt-and-suspenders once the chip's freed that space: clips instead of
+     visibly overlapping the next element if it's ever still tight. Dropped
+     all the way to var(--text-xs) — still legible as a short brand
+     wordmark, and gives real margin instead of a knife-edge fit that
+     breaks again the next time something gets added to this row. */
+  .app-header-logo {
+    overflow: hidden !important;
+  }
+  .app-header-logo-main {
+    font-size: var(--text-xs) !important;
+  }
+  .app-header-logo-badge {
+    display: none !important;
+  }
+  .app-footer-inner,
+  .app-footer-bottom {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+  /* Footer's column row (brand / Explore / Legal / Connect) is a nested
+     flex row with its own gap, independent of the outer footer layout's
+     own wrap — under ~640px the four columns don't fit one line and need a
+     tighter gap so the wrapped rows don't look sparse. */
+  .app-footer-columns {
+    gap: 28px !important;
+  }
+  .app-footer-cta {
+    padding-bottom: 28px !important;
+    margin-bottom: 28px !important;
   }
   .hero-content {
     padding: 0 24px !important;

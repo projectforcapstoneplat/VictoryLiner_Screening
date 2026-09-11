@@ -10,9 +10,11 @@ import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { RequirementRow } from '../components/core/RequirementRow/RequirementRow.jsx';
+import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { supabase } from '../lib/supabaseClient.js';
 import { updatePassword, getProfile } from '../lib/auth.js';
 import { getPasswordChecklist, isPasswordValid } from '../lib/passwordRules.js';
+import { friendlyAuthError } from '../lib/authErrors.js';
 
 const HR_ROLES = ['hr_personnel', 'hr_head'];
 
@@ -49,7 +51,7 @@ export function ResetPassword({ nav }) {
     const { error: updateError } = await updatePassword(password);
     setLoading(false);
     if (updateError) {
-      setError(updateError.message);
+      setError(friendlyAuthError(updateError.message));
       return;
     }
     setDone(true);
@@ -78,7 +80,7 @@ export function ResetPassword({ nav }) {
                   <RequirementRow passed={passwordsMatch} label="Passwords match" />
                 </div>
               )}
-              {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
+              <FormError message={error} />
               <Button variant="strong" size="lg" onClick={handleSubmit} disabled={loading || !canSubmit}>{loading ? 'Updating…' : 'Update Password'}</Button>
             </div>
           )}

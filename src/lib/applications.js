@@ -1,60 +1,5 @@
 import { supabase } from './supabaseClient.js';
 
-export async function submitApplication({
-  jobId,
-  applicantId,
-  fullName,
-  email,
-  phone,
-  workExperience,
-  education,
-  skills,
-  certifications,
-  coverNote,
-  driversLicenseType,
-  driversLicenseRestrictions,
-  yearsDrivingExperience,
-  hasNbiClearance,
-  willingShiftingSchedule,
-  educationLevel,
-  currentLocation,
-  hasMedicalCertificate,
-}) {
-  const { data, error } = await supabase
-    .from('applications')
-    .insert({
-      job_id: jobId,
-      applicant_id: applicantId,
-      full_name: fullName,
-      email,
-      phone,
-      work_experience: workExperience,
-      education,
-      skills,
-      certifications,
-      cover_note: coverNote,
-      drivers_license_type: driversLicenseType ?? null,
-      drivers_license_restrictions: driversLicenseRestrictions ?? [],
-      years_driving_experience: yearsDrivingExperience ?? null,
-      has_nbi_clearance: hasNbiClearance ?? null,
-      willing_shifting_schedule: willingShiftingSchedule ?? null,
-      education_level: educationLevel ?? null,
-      current_location: currentLocation ?? null,
-      has_medical_certificate: hasMedicalCertificate ?? null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    if (error.code === '23505') {
-      return { error: { message: 'You have already applied to this job.' } };
-    }
-    return { error };
-  }
-
-  return { data };
-}
-
 export async function listApplicationsForJob(jobId) {
   const { data, error } = await supabase
     .from('applications')
@@ -65,37 +10,41 @@ export async function listApplicationsForJob(jobId) {
   return { data: data || [], error };
 }
 
-// Used by the apply flow to detect an already-submitted application for this
-// job, so a returning applicant is routed onward instead of shown a blank
-// resume form again.
-export async function getApplicationForJob(jobId, applicantId) {
-  const { data, error } = await supabase
-    .from('applications')
-    .select('*, job_postings(title, category)')
-    .eq('job_id', jobId)
-    .eq('applicant_id', applicantId)
-    .maybeSingle();
-  return { data, error };
-}
-
-// Used by ApplicationForm to pre-fill a new application from the applicant's
-// most recent other one, so they aren't retyping work experience/education/
-// skills/etc. from scratch for every job they apply to.
-export async function getMostRecentApplication(applicantId) {
+// Full row for one application — used when HR expands a single applicant's
+// row in the unified Applicants table (HrApplicantsList.jsx). The table
+// itself only ever holds the lightweight per-applicant summary from
+// reports.js (scores/status, not phone/skills/education/etc.), so the full
+// record is fetched on demand only for whichever row is actually opened.
+export async function getApplicationById(applicationId) {
   const { data, error } = await supabase
     .from('applications')
     .select('*')
-    .eq('applicant_id', applicantId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .eq('id', applicationId)
+    .single();
   return { data, error };
 }
 
+// Bulk version of the above — used for CSV export, which needs full fields
+// (phone, skills, education, driver's license, etc.) for every currently
+// filtered row at once, not just whichever one HR happens to have expanded.
+export async function listApplicationsByIds(applicationIds) {
+  if (!applicationIds.length) return { data: [] };
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .in('id', applicationIds);
+  return { data: data || [], error };
+}
+
+// Full job_postings row (not just title/category/min_resume_match_percent)
+// — MyApplications.jsx links back to the actual Job Details page for
+// whichever applications have no other next action right now (still
+// awaiting HR's first look, declined, etc.), which needs the job's full
+// fields (description, qualifications, location...) to render properly.
 export async function listApplicationsForApplicant(applicantId) {
   const { data, error } = await supabase
     .from('applications')
-    .select('*, job_postings(title, category, min_resume_match_percent)')
+    .select('*, job_postings(*)')
     .eq('applicant_id', applicantId)
     .order('created_at', { ascending: false });
 
@@ -115,9 +64,14 @@ export async function listApplicationsForApplicant(applicantId) {
 // status as part of the update, not just by id) so a second write can't
 // silently overwrite the first.
 export async function updateApplicationStatus(applicationId, status, decidedBy) {
+  const update = { status };
+  // Starts the 3-day video-screening deadline clock — this is the one place
+  // HR manually advances someone into interview_stage (quick-apply's own
+  // auto-advance stamps this itself, see supabase/functions/quick-apply).
+  if (status === 'interview_stage') update.interview_stage_at = new Date().toISOString();
   const { data, error } = await supabase
     .from('applications')
-    .update({ status })
+    .update(update)
     .eq('id', applicationId)
     .select()
     .single();
@@ -126,6 +80,63 @@ export async function updateApplicationStatus(applicationId, status, decidedBy) 
 
   await supabase.from('application_decision_log').insert({ application_id: applicationId, decided_by: decidedBy, status });
   return { data, error: null };
+}
+
+// HR schedules a personal (in-person) interview for an applicant who's
+// already been advanced — separate from the submitted/interview_stage/
+// advanced/declined status column, since scheduling is additional detail on
+// top of "advanced," not a new stage of the pipeline. Overwrites cleanly if
+// HR needs to reschedule.
+export async function scheduleInterview(applicationId, { scheduledAt, location, notes }, setBy) {
+  const { data, error } = await supabase
+    .from('applications')
+    .update({
+      scheduled_interview_at: scheduledAt,
+      scheduled_interview_location: location || null,
+      scheduled_interview_notes: notes || null,
+      scheduled_interview_set_by: setBy,
+      scheduled_interview_set_at: new Date().toISOString(),
+    })
+    .eq('id', applicationId)
+    .select()
+    .single();
+  return { data, error };
+}
+
+// Best-effort, same reasoning as notifyApplicantStatusChange — a failed send
+// never undoes the schedule that was just saved.
+export async function notifyInterviewScheduled(applicationId, { scheduledAt, location, notes }) {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return;
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-interview-scheduled-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicationId, scheduledAt, location, notes }),
+    });
+  } catch {
+    // Notification is a courtesy, not a requirement — never surface this.
+  }
+}
+
+// Best-effort, same reasoning as the two above — called once, right when an
+// applicant's last video answer finishes uploading (src/pages/Interview.jsx),
+// so HR finds out the moment someone's actually ready for review instead of
+// only whenever they next happen to open a dashboard.
+export async function notifyHrInterviewCompleted(applicationId) {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return;
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-interview-completed-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicationId }),
+    });
+  } catch {
+    // Notification is a courtesy, not a requirement — never surface this.
+  }
 }
 
 // Best-effort — a failed/unconfigured email send never undoes the status

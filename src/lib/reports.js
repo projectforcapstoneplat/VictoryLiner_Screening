@@ -4,15 +4,16 @@ import { supabase } from './supabaseClient.js';
 // and HR Personnel (operational queue + decisions) dashboards — mirrors the
 // paper's Candidate Ranking module (resume_score + interview_score ->
 // total_score -> ranking) and Report concepts, computed live from the
-// existing tables client-side rather than a stored `results`/`report` table,
-// the same pattern HrApplicants.jsx already uses for its per-job ranked list.
+// existing tables client-side rather than a stored `results`/`report` table.
+// `scored` here is also the lightweight cross-job summary HrApplicantsList.jsx
+// reads for its overview table (see getScoredApplicants below).
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Combined score = mean of resume score and interview score when both exist,
 // otherwise whichever one exists, otherwise null (unranked/not yet screened) —
-// identical formula to the per-job ranking in HrApplicants.jsx, kept
-// consistent so a candidate's rank reads the same everywhere in the app.
+// identical formula HrApplicantsList.jsx uses, kept consistent so a
+// candidate's rank reads the same everywhere in the app.
 function combineScore(resumeScore, interviewScore) {
   if (resumeScore != null && interviewScore != null) return Math.round((resumeScore + interviewScore) / 2);
   return resumeScore ?? interviewScore ?? null;
@@ -42,7 +43,7 @@ function weekTrend(timestamps) {
 async function loadRaw() {
   const [jobsRes, appsRes, resumeEvalRes, responsesRes, interviewEvalRes, hrRes, decisionLogRes] = await Promise.all([
     supabase.from('job_postings').select('*').order('created_at', { ascending: false }),
-    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at'),
+    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at, scheduled_interview_at'),
     supabase.from('resume_evaluations').select('application_id, job_id, score, evaluated_at'),
     supabase.from('interview_responses').select('id, application_id, video_path, interview_questions(question_text)'),
     supabase.from('interview_evaluations').select('response_id, application_id, evaluation_score, sentiment_label, evaluated_at'),
@@ -91,6 +92,7 @@ async function loadRaw() {
       skills: a.skills,
       status: a.status,
       createdAt: a.created_at,
+      scheduledInterviewAt: a.scheduled_interview_at,
       job: jobById.get(a.job_id),
       resumeScore,
       resumeEvaluatedAt: resumeEval?.evaluated_at ?? null,
@@ -141,10 +143,126 @@ function buildScoreDistribution(scores) {
   }));
 }
 
-export async function getHeadOverview() {
+// Same idea as buildWeeklyVolume below, but bucketed across an arbitrary
+// [from, to] span instead of a fixed "last 8 weeks ending now" — used when
+// HR Head has an explicit report period selected, where a chart still
+// anchored to today would be misleading (e.g. picking "Last Month" should
+// show that month's weeks, not today's).
+function buildRangeVolume(timestamps, from, to) {
+  const start = new Date(`${from}T00:00:00`).getTime();
+  const end = new Date(`${to}T23:59:59`).getTime();
+  const weeks = Math.max(1, Math.ceil((end - start + 1) / (7 * DAY_MS)));
+  const buckets = [];
+  for (let i = 0; i < weeks; i += 1) {
+    const bucketStart = start + i * 7 * DAY_MS;
+    const bucketEnd = Math.min(bucketStart + 7 * DAY_MS, end + 1);
+    const count = timestamps.filter((t) => {
+      const time = new Date(t).getTime();
+      return time >= bucketStart && time < bucketEnd;
+    }).length;
+    buckets.push({ label: new Date(bucketStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count });
+  }
+  return buckets;
+}
+
+// Weekly application volume for the last `weeks` weeks (oldest first, so a
+// chart reads left-to-right as time moving forward) — the one thing a real
+// trend/line-style chart actually needs that a single before/after
+// percentage (weekTrend, above) can't provide. Empty weeks stay in the
+// output at 0 rather than being skipped, same reasoning as SCORE_BUCKETS:
+// a chart's time axis shouldn't silently skip a week just because nothing
+// happened in it.
+function buildWeeklyVolume(timestamps, weeks = 8) {
+  const now = Date.now();
+  const buckets = [];
+  for (let i = weeks - 1; i >= 0; i -= 1) {
+    const end = now - i * 7 * DAY_MS;
+    const start = end - 7 * DAY_MS;
+    const count = timestamps.filter((t) => {
+      const time = new Date(t).getTime();
+      return time >= start && time < end;
+    }).length;
+    buckets.push({ label: new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count });
+  }
+  return buckets;
+}
+
+// Classic recruiting cycle-time metric — calendar days from an applicant's
+// submission to HR's final call. Only counts applications that actually
+// reached advanced/declined; a still-pending application has no end date to
+// measure to, so including it would understate the real average. One
+// decimal place (not rounded to a whole day) since this is usually a small
+// enough number that the fraction is the meaningful part of it.
+// `outcomeFilter` narrows to just 'advanced' or just 'declined' — used to
+// compare whether one kind of call tends to take longer than the other,
+// rather than only ever seeing one blended average.
+function averageTimeToDecision(scored, decisionLog, outcomeFilter = null) {
+  const decidedAtByApp = new Map();
+  for (const d of decisionLog) {
+    if (d.status !== 'advanced' && d.status !== 'declined') continue;
+    if (outcomeFilter && d.status !== outcomeFilter) continue;
+    const existing = decidedAtByApp.get(d.application_id);
+    if (!existing || new Date(d.decided_at) > new Date(existing)) decidedAtByApp.set(d.application_id, d.decided_at);
+  }
+  const days = [];
+  for (const s of scored) {
+    const decidedAt = decidedAtByApp.get(s.applicationId);
+    if (!decidedAt) continue;
+    const diff = (new Date(decidedAt).getTime() - new Date(s.createdAt).getTime()) / DAY_MS;
+    if (diff >= 0) days.push(diff);
+  }
+  if (!days.length) return null;
+  return Math.round((days.reduce((sum, d) => sum + d, 0) / days.length) * 10) / 10;
+}
+
+// Applicants whose video interview just finished (every question answered
+// AND AI-evaluated) — ready for HR to look at, most-recently-finished first.
+// Deliberately not "scheduled" or "live" anything: interviews here are
+// pre-recorded on the applicant's own time, not a real-time call HR joins.
+function buildRecentInterviews(scored, limit = 5) {
+  return scored
+    .filter((s) => s.interviewCompleted)
+    .map((s) => {
+      const evaluatedTimestamps = s.interviewAnswers.map((a) => a.evaluation?.evaluated_at).filter(Boolean);
+      const completedAt = evaluatedTimestamps.length ? evaluatedTimestamps.sort().at(-1) : null;
+      return { ...s, interviewEvaluatedAt: completedAt };
+    })
+    .filter((s) => s.interviewEvaluatedAt)
+    .sort((a, b) => new Date(b.interviewEvaluatedAt) - new Date(a.interviewEvaluatedAt))
+    .slice(0, limit);
+}
+
+function inRange(iso, from, to) {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
+  if (to && t > new Date(`${to}T23:59:59`).getTime()) return false;
+  return true;
+}
+
+// `{ from, to }` — 'YYYY-MM-DD' strings, either or both omitted for an
+// unbounded side. Scopes the whole report to the cohort of applicants who
+// *applied* within that window (applications.created_at is the single
+// anchor timestamp) — resume/interview scores, sentiment, and decision
+// counts all narrow to that same cohort so every number on the page is
+// talking about the same group of people. Two things deliberately don't
+// narrow: `jobStats` (published/draft/closed counts) describes the current
+// state of job postings, not a historical cohort, so filtering it by an
+// applicant date range wouldn't mean anything; and week-over-week `trends`
+// are dropped entirely for a custom range (comparing "this week" is
+// meaningless once HR Head is looking at, say, last month specifically).
+export async function getHeadOverview({ from, to } = {}) {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, decisionLog, scored } = raw;
+  const { jobs, hrPersonnel } = raw;
+  const hasRange = Boolean(from || to);
+
+  const applications = hasRange ? raw.applications.filter((a) => inRange(a.created_at, from, to)) : raw.applications;
+  const scored = hasRange ? raw.scored.filter((s) => inRange(s.createdAt, from, to)) : raw.scored;
+  const scoredIds = new Set(scored.map((s) => s.applicationId));
+  const resumeEvaluations = hasRange ? raw.resumeEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.resumeEvaluations;
+  const interviewEvaluations = hasRange ? raw.interviewEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.interviewEvaluations;
+  const decisionLog = hasRange ? raw.decisionLog.filter((d) => scoredIds.has(d.application_id)) : raw.decisionLog;
 
   const jobStats = {
     total: jobs.length,
@@ -250,17 +368,52 @@ export async function getHeadOverview() {
     };
   }).sort((a, b) => b.applicantCount - a.applicantCount);
 
-  const trends = {
-    applicants: weekTrend(applications.map((a) => a.created_at)),
-    resumeScreened: weekTrend(resumeEvaluations.map((e) => e.evaluated_at)),
-    interviewsCompleted: weekTrend(interviewEvaluations.map((e) => e.evaluated_at)),
+  const trends = hasRange
+    ? { applicants: null, resumeScreened: null, interviewsCompleted: null }
+    : {
+        applicants: weekTrend(applications.map((a) => a.created_at)),
+        resumeScreened: weekTrend(resumeEvaluations.map((e) => e.evaluated_at)),
+        interviewsCompleted: weekTrend(interviewEvaluations.map((e) => e.evaluated_at)),
+      };
+
+  const weeklyApplications = hasRange
+    ? buildRangeVolume(applications.map((a) => a.created_at), from, to)
+    : buildWeeklyVolume(applications.map((a) => a.created_at));
+
+  // System-wide final-call breakdown — "pending" covers anything HR hasn't
+  // made a final advanced/declined call on yet (submitted or interview_stage),
+  // separate from the per-job pipeline stages above, which track how far
+  // along each application is rather than its eventual outcome.
+  const decisionOutcomes = {
+    advanced: applications.filter((a) => a.status === 'advanced').length,
+    declined: applications.filter((a) => a.status === 'declined').length,
+    pending: applications.filter((a) => a.status === 'submitted' || a.status === 'interview_stage').length,
   };
+
+  // Splits the "pending" bucket above by where each application is actually
+  // stuck — awaiting a first look versus already through screening and
+  // waiting on HR's final call after the video interview.
+  const pendingBreakdown = {
+    awaitingScreening: applications.filter((a) => a.status === 'submitted').length,
+    awaitingFinalDecision: applications.filter((a) => a.status === 'interview_stage').length,
+  };
+
+  const avgTimeToHire = averageTimeToDecision(scored, decisionLog);
+  // Same metric, split by outcome — reveals whether advances or declines
+  // tend to take systematically longer to reach.
+  const avgTimeToHireByOutcome = {
+    advanced: averageTimeToDecision(scored, decisionLog, 'advanced'),
+    declined: averageTimeToDecision(scored, decisionLog, 'declined'),
+  };
+  const recentInterviews = buildRecentInterviews(scored);
 
   return {
     data: {
       jobStats, applicantCount: applications.length, funnel, scores, sentiment,
       topCandidates, jobBreakdown, hrActivity, trends,
-      resumeScoreDistribution, categoryBreakdown,
+      resumeScoreDistribution, categoryBreakdown, weeklyApplications, decisionOutcomes,
+      pendingBreakdown, avgTimeToHire, avgTimeToHireByOutcome, recentInterviews,
+      range: { from: from || null, to: to || null },
     },
   };
 }
@@ -312,12 +465,20 @@ export async function getPersonnelOverview() {
 
   const recent = [...scored].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8);
 
+  // Where the current applicant pool's resume scores cluster — helps HR
+  // Personnel gauge their queue at a glance (mostly borderline candidates?
+  // mostly strong ones?) rather than just working through it one row at a
+  // time. Same bucketing as HR Head's system-wide version (buildScoreDistribution)
+  // so a score bucket reads identically everywhere it appears.
+  const resumeScoreDistribution = buildScoreDistribution(scored.map((s) => s.resumeScore).filter((n) => n != null));
+
   return {
     data: {
       kpis, trends, decidedCount,
       queue: pending,
       jobBreakdown,
       recent,
+      resumeScoreDistribution,
       sentiment: (() => {
         const counts = { positive: 0, neutral: 0, negative: 0 };
         for (const e of interviewEvaluations) if (counts[e.sentiment_label] != null) counts[e.sentiment_label] += 1;

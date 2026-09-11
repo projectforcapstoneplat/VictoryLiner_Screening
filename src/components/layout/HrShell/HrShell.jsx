@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../../lib/ThemeContext.jsx';
 import { signOut } from '../../../lib/auth.js';
 import { searchHr } from '../../../lib/hrSearch.js';
+import { listJobsNearingDeadline } from '../../../lib/jobs.js';
+import { deadlineInfo } from '../../../lib/deadline.js';
+import { listPublishedJobsMissingQuestions } from '../../../lib/interviewQuestions.js';
 
 const ICONS = {
   dashboard: (
@@ -35,6 +38,11 @@ const ICONS = {
     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="7" r="3" /><path d="M3 20a5 5 0 0 1 10 0" />
       <path d="M15 8h6M15 12h6M15 16h4" />
+    </svg>
+  ),
+  checkCircle: (
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><path d="m8 12.5 2.5 2.5L16 9.5" />
     </svg>
   ),
   bell: (
@@ -83,6 +91,16 @@ const ICONS = {
 
 const NAV_ITEMS = [
   { key: 'hr-dashboard', label: 'Dashboard', icon: 'dashboard', roles: ['hr_personnel', 'hr_head'] },
+  // hr_personnel-only — only they ever have decide buttons rendered
+  // (HrApplicantsList.jsx gates Advance/Decline/Reopen on that role
+  // throughout), so this tab would just be a read-only, redundant view of
+  // Applicants for HR Head. App.jsx routes this to the same
+  // HrApplicantsList component as 'hr-applicant-list' below, just with
+  // stageFilter="pending" pre-set — "Awaiting Your Decision" covers both
+  // decision stages, not just the video-interview one (see the `pending`
+  // stage in HrApplicantsList.jsx), instead of landing on the unfiltered
+  // full directory.
+  { key: 'hr-decisions', label: 'Decisions', icon: 'checkCircle', roles: ['hr_personnel'] },
   { key: 'hr-jobs', label: 'Job Openings', icon: 'briefcase', roles: ['hr_personnel', 'hr_head'] },
   { key: 'hr-applicant-list', label: 'Applicants', icon: 'applicantList', roles: ['hr_personnel', 'hr_head'] },
   { key: 'interview-questions', label: 'Interview Questions', icon: 'question', roles: ['hr_personnel', 'hr_head'] },
@@ -123,8 +141,8 @@ function SearchBox({ nav }) {
     return () => clearTimeout(timeout);
   }, [query]);
 
-  const goToJob = (job) => { setQuery(''); setResults(null); nav('hr-applicants', job); };
-  const goToApplicant = (app) => { setQuery(''); setResults(null); if (app.job_postings) nav('hr-applicants', app.job_postings); };
+  const goToJob = (job) => { setQuery(''); setResults(null); nav('hr-applicant-list', job); };
+  const goToApplicant = (app) => { setQuery(''); setResults(null); if (app.job_postings) nav('hr-applicant-list', app.job_postings); };
 
   const hasResults = results && (results.jobs.length > 0 || results.applicants.length > 0);
 
@@ -135,7 +153,7 @@ function SearchBox({ nav }) {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by applicant name or job title…"
+          placeholder="Search applicant or job…"
           title="Search by applicant name or job title"
           className="hr-search-input"
           style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, color: '#fff', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)' }}
@@ -168,10 +186,52 @@ function SearchBox({ nav }) {
   );
 }
 
+// Deadline alerts are fetched here, independent of whatever page mounted
+// this shell — so "Job A closes in 2 days" shows up in the bell no matter
+// which HR screen you're actually looking at, not just Job Openings.
+function useJobDeadlineAlerts() {
+  const [alerts, setAlerts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    listJobsNearingDeadline().then(({ data }) => {
+      if (cancelled) return;
+      const urgent = (data || [])
+        .map((job) => ({ job, info: deadlineInfo(job.application_deadline) }))
+        .filter(({ info }) => info?.urgent && !info?.closed);
+      setAlerts(urgent.map(({ job, info }) => ({ kind: 'deadline', id: `deadline-${job.id}`, job, label: info.label })));
+    });
+    return () => { cancelled = true; };
+  }, []);
+  return alerts;
+}
+
+// Same self-contained-fetch idea as useJobDeadlineAlerts — a published job
+// whose category has zero questions in the bank can't run its video-
+// screening stage at all, which is worse than a looming deadline, so it's
+// worth catching the moment it happens (right after publishing) rather than
+// HR discovering it only when an applicant gets stuck.
+function useMissingQuestionsAlerts() {
+  const [alerts, setAlerts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    listPublishedJobsMissingQuestions().then(({ data }) => {
+      if (cancelled) return;
+      setAlerts((data || []).map(({ category, jobTitles }) => ({
+        kind: 'missing-questions', id: `missing-questions-${category}`, category, jobTitles,
+      })));
+    });
+    return () => { cancelled = true; };
+  }, []);
+  return alerts;
+}
+
 function NotificationBell({ notifications, nav }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
-  const count = notifications.length;
+  const jobAlerts = useJobDeadlineAlerts();
+  const questionAlerts = useMissingQuestionsAlerts();
+  const combined = [...questionAlerts, ...jobAlerts, ...notifications.map((n) => ({ ...n, kind: 'applicant' }))];
+  const count = combined.length;
 
   useEffect(() => {
     const onClick = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
@@ -179,9 +239,11 @@ function NotificationBell({ notifications, nav }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const goToCandidate = (n) => {
+  const handleClick = (n) => {
     setOpen(false);
-    if (n.job) nav('hr-applicants', n.job);
+    if (n.kind === 'missing-questions') { nav('interview-questions', n.category); return; }
+    if (n.kind === 'deadline') { nav('hr-jobs'); return; }
+    if (n.job) nav('hr-applicant-list', n.job);
   };
 
   return (
@@ -203,18 +265,34 @@ function NotificationBell({ notifications, nav }) {
       </button>
       {open && (
         <div style={{ position: 'absolute', top: 44, right: 0, width: 300, background: 'var(--surface-card)', borderRadius: 12, boxShadow: '0 12px 28px rgba(0,0,0,0.22)', padding: 10, zIndex: 60, maxHeight: 360, overflowY: 'auto' }}>
-          <strong style={{ fontSize: 'var(--text-sm)', display: 'block', padding: '6px 8px 10px' }}>Awaiting your review</strong>
+          <strong style={{ fontSize: 'var(--text-sm)', display: 'block', padding: '6px 8px 10px' }}>Needs your attention</strong>
           {count === 0 ? (
             <p style={{ fontSize: 'var(--text-xs)', opacity: 0.7, margin: 0, padding: '0 8px 6px' }}>Nothing pending — you're all caught up.</p>
           ) : (
-            notifications.map((n) => (
+            combined.map((n) => (
               <div
-                key={n.applicationId}
-                onClick={() => goToCandidate(n)}
+                key={n.kind === 'applicant' ? n.applicationId : n.id}
+                onClick={() => handleClick(n)}
                 style={{ padding: '8px 8px', borderRadius: 8, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2 }}
               >
-                <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{n.name}</span>
-                <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>Ready for decision — {n.job?.title || 'Unknown role'}</span>
+                {n.kind === 'missing-questions' ? (
+                  <>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>📝 {n.category}</span>
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)' }}>
+                      No interview questions yet — {n.jobTitles.length} published job{n.jobTitles.length === 1 ? '' : 's'} can&rsquo;t run video screening ({n.jobTitles.slice(0, 2).join(', ')}{n.jobTitles.length > 2 ? `, +${n.jobTitles.length - 2} more` : ''})
+                    </span>
+                  </>
+                ) : n.kind === 'deadline' ? (
+                  <>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>⏰ {n.job.title}</span>
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)' }}>{n.label} — review or extend the deadline</span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{n.name}</span>
+                    <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>Ready for decision — {n.job?.title || 'Unknown role'}</span>
+                  </>
+                )}
               </div>
             ))
           )}
