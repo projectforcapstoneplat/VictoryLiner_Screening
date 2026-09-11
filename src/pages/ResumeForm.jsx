@@ -8,7 +8,7 @@
 // Split into steps (one section group visible at a time, Back/Next between
 // them) rather than one long scroll — the full form has 8 sections, which
 // read as overwhelming all at once on first landing on the site.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
@@ -60,6 +60,16 @@ function StepProgress({ step }) {
 export function ResumeForm({ profile, nav, onResumeSaved }) {
   const [checking, setChecking] = useState(true);
   const [step, setStep] = useState(0);
+  // Cached match scores were computed against whatever the resume looked
+  // like before this editing session started — the moment any step actually
+  // gets saved, those scores describe a resume that no longer exists. Only
+  // handleSubmit (the final step) used to clear them, so an applicant who
+  // edited several steps' worth of real changes and then abandoned before
+  // reaching the last step left every job showing a stale match percentage
+  // indefinitely (match-resume-to-jobs never re-scores a job that already
+  // has a cached row). Tracked so this only fires once per editing session,
+  // not on every single "Next" click.
+  const matchesInvalidatedRef = useRef(false);
   const [firstName, setFirstName] = useState(() => splitFullName(profile?.full_name).firstName);
   const [lastName, setLastName] = useState(() => splitFullName(profile?.full_name).lastName);
   const [email, setEmail] = useState(profile?.email || '');
@@ -191,6 +201,10 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // of a failed autosave is losing just this one step's checkpoint, not
     // the whole session.
     upsertMyResume(profile.id, { ...buildResumePayload(), last_step: nextStep });
+    if (!matchesInvalidatedRef.current) {
+      matchesInvalidatedRef.current = true;
+      clearMyMatches(profile.id);
+    }
   };
 
   const handleBack = () => {

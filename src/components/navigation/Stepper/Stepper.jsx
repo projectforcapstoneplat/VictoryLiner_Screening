@@ -49,7 +49,7 @@ function CheckIcon() {
   );
 }
 
-export function Stepper({ steps = ['Create an Account/ Sign In', 'My Information/ Resume', 'Processing', 'Video Screening', 'Review'], current = 0 }) {
+export function Stepper({ steps = ['Create Account', 'Resume', 'Video Screening', 'Reviewing', 'Result'], current = 0 }) {
   // Each step's dot sits at the horizontal center of its own flex column
   // (columns are equal-width, `flex: 1`, content centered) — i.e. at
   // (i + 0.5) / steps.length of the row. The track/fill/bus must be

@@ -16,6 +16,8 @@ import searchIconOutline from '../assets/search-icon-outline.svg';
 const PER_PAGE = 6;
 const ALL_CATEGORIES = 'All Categories';
 
+const HOME_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 10v9a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9" /></svg>;
+
 function CategoryChip({ category, active, onClick }) {
   return (
     <button
@@ -76,14 +78,12 @@ function JobResultCard({ index, job, onView, onApply }) {
             {job.open_positions} Open Position{job.open_positions === 1 ? '' : 's'}
           </span>
           {deadline && (
-            <span style={{ fontSize: 'var(--text-sm)', fontWeight: deadline.urgent ? 700 : 400, color: deadline.closed ? 'var(--text-primary)' : deadline.urgent ? 'var(--red-700)' : 'var(--text-primary)', opacity: deadline.closed ? 0.6 : deadline.urgent ? 1 : 0.75 }}>
+            <span style={{ fontSize: 'var(--text-sm)', fontWeight: deadline.urgent ? 700 : 400, color: deadline.urgent ? 'var(--red-700)' : 'var(--text-primary)', opacity: deadline.urgent ? 1 : 0.75 }}>
               {deadline.label}
             </span>
           )}
         </div>
-        <Button variant="strong" size="sm" disabled={deadline?.closed} onClick={(e) => { e.stopPropagation(); if (!deadline?.closed) onApply(); }} style={deadline?.closed ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
-          {deadline?.closed ? 'Closed' : 'View Details'}
-        </Button>
+        <Button variant="strong" size="sm" onClick={(e) => { e.stopPropagation(); onApply(); }}>View Details</Button>
       </div>
     </div>
   );
@@ -133,7 +133,12 @@ export function JobFilter({ nav }) {
 
   useEffect(() => {
     listPublishedJobs().then(({ data }) => {
-      setJobs(data);
+      // A job past its own application deadline has nothing left for an
+      // applicant to do here — it used to still show up with a disabled
+      // "Closed" button, which just cluttered the list with postings
+      // nobody can act on. Filtered out at the source instead of rendered-
+      // but-disabled.
+      setJobs((data || []).filter((j) => !deadlineInfo(j.application_deadline)?.closed));
       setLoading(false);
     });
     listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
@@ -164,9 +169,20 @@ export function JobFilter({ nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} onLogoClick={() => nav('home')} /></div>
       <section style={{ maxWidth: 1066, margin: '60px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up">
+          <button
+            onClick={() => nav('home')}
+            className="btn-animate"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 7, marginBottom: 20,
+              padding: '9px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', fontWeight: 700,
+            }}
+          >
+            {HOME_ICON} Home
+          </button>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>
             Careers at Victory Liner
           </div>

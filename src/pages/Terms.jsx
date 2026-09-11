@@ -4,7 +4,10 @@
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 
-const SECTIONS = [
+// Exported so the Create Account consent step (SignIn.jsx) can show the
+// exact same content in an in-page modal instead of duplicating it — one
+// list of terms, two places it can be read from.
+export const TERMS_SECTIONS = [
   {
     h: 'Accepting These Terms',
     body: 'By creating an account or submitting an application through Victory Liner Careers, you agree to these terms and to our Privacy Policy.',
@@ -47,7 +50,7 @@ export function Terms({ nav }) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 60 }}>
-          {SECTIONS.map((s, i) => (
+          {TERMS_SECTIONS.map((s, i) => (
             <div key={s.h} className="fade-in-up" style={{ animationDelay: `${Math.min(i, 6) * 0.06}s`, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 30px' }}>
               <h3 style={{ margin: '0 0 10px', fontSize: 'var(--text-lg)', fontWeight: 700 }}>{s.h}</h3>
               <p style={{ margin: 0, fontSize: 'var(--text-sm)', lineHeight: 1.7, opacity: 0.85 }}>{s.body}</p>

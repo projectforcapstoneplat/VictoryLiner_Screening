@@ -43,7 +43,7 @@ function weekTrend(timestamps) {
 async function loadRaw() {
   const [jobsRes, appsRes, resumeEvalRes, responsesRes, interviewEvalRes, hrRes, decisionLogRes] = await Promise.all([
     supabase.from('job_postings').select('*').order('created_at', { ascending: false }),
-    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at'),
+    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at, scheduled_interview_at'),
     supabase.from('resume_evaluations').select('application_id, job_id, score, evaluated_at'),
     supabase.from('interview_responses').select('id, application_id, video_path, interview_questions(question_text)'),
     supabase.from('interview_evaluations').select('response_id, application_id, evaluation_score, sentiment_label, evaluated_at'),
@@ -92,6 +92,7 @@ async function loadRaw() {
       skills: a.skills,
       status: a.status,
       createdAt: a.created_at,
+      scheduledInterviewAt: a.scheduled_interview_at,
       job: jobById.get(a.job_id),
       resumeScore,
       resumeEvaluatedAt: resumeEval?.evaluated_at ?? null,
@@ -140,6 +141,28 @@ function buildScoreDistribution(scores) {
     label: b.label,
     count: scores.filter((s) => s >= b.min && s <= b.max).length,
   }));
+}
+
+// Same idea as buildWeeklyVolume below, but bucketed across an arbitrary
+// [from, to] span instead of a fixed "last 8 weeks ending now" — used when
+// HR Head has an explicit report period selected, where a chart still
+// anchored to today would be misleading (e.g. picking "Last Month" should
+// show that month's weeks, not today's).
+function buildRangeVolume(timestamps, from, to) {
+  const start = new Date(`${from}T00:00:00`).getTime();
+  const end = new Date(`${to}T23:59:59`).getTime();
+  const weeks = Math.max(1, Math.ceil((end - start + 1) / (7 * DAY_MS)));
+  const buckets = [];
+  for (let i = 0; i < weeks; i += 1) {
+    const bucketStart = start + i * 7 * DAY_MS;
+    const bucketEnd = Math.min(bucketStart + 7 * DAY_MS, end + 1);
+    const count = timestamps.filter((t) => {
+      const time = new Date(t).getTime();
+      return time >= bucketStart && time < bucketEnd;
+    }).length;
+    buckets.push({ label: new Date(bucketStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count });
+  }
+  return buckets;
 }
 
 // Weekly application volume for the last `weeks` weeks (oldest first, so a
@@ -209,10 +232,37 @@ function buildRecentInterviews(scored, limit = 5) {
     .slice(0, limit);
 }
 
-export async function getHeadOverview() {
+function inRange(iso, from, to) {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
+  if (to && t > new Date(`${to}T23:59:59`).getTime()) return false;
+  return true;
+}
+
+// `{ from, to }` — 'YYYY-MM-DD' strings, either or both omitted for an
+// unbounded side. Scopes the whole report to the cohort of applicants who
+// *applied* within that window (applications.created_at is the single
+// anchor timestamp) — resume/interview scores, sentiment, and decision
+// counts all narrow to that same cohort so every number on the page is
+// talking about the same group of people. Two things deliberately don't
+// narrow: `jobStats` (published/draft/closed counts) describes the current
+// state of job postings, not a historical cohort, so filtering it by an
+// applicant date range wouldn't mean anything; and week-over-week `trends`
+// are dropped entirely for a custom range (comparing "this week" is
+// meaningless once HR Head is looking at, say, last month specifically).
+export async function getHeadOverview({ from, to } = {}) {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, applications, resumeEvaluations, interviewEvaluations, hrPersonnel, decisionLog, scored } = raw;
+  const { jobs, hrPersonnel } = raw;
+  const hasRange = Boolean(from || to);
+
+  const applications = hasRange ? raw.applications.filter((a) => inRange(a.created_at, from, to)) : raw.applications;
+  const scored = hasRange ? raw.scored.filter((s) => inRange(s.createdAt, from, to)) : raw.scored;
+  const scoredIds = new Set(scored.map((s) => s.applicationId));
+  const resumeEvaluations = hasRange ? raw.resumeEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.resumeEvaluations;
+  const interviewEvaluations = hasRange ? raw.interviewEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.interviewEvaluations;
+  const decisionLog = hasRange ? raw.decisionLog.filter((d) => scoredIds.has(d.application_id)) : raw.decisionLog;
 
   const jobStats = {
     total: jobs.length,
@@ -318,13 +368,17 @@ export async function getHeadOverview() {
     };
   }).sort((a, b) => b.applicantCount - a.applicantCount);
 
-  const trends = {
-    applicants: weekTrend(applications.map((a) => a.created_at)),
-    resumeScreened: weekTrend(resumeEvaluations.map((e) => e.evaluated_at)),
-    interviewsCompleted: weekTrend(interviewEvaluations.map((e) => e.evaluated_at)),
-  };
+  const trends = hasRange
+    ? { applicants: null, resumeScreened: null, interviewsCompleted: null }
+    : {
+        applicants: weekTrend(applications.map((a) => a.created_at)),
+        resumeScreened: weekTrend(resumeEvaluations.map((e) => e.evaluated_at)),
+        interviewsCompleted: weekTrend(interviewEvaluations.map((e) => e.evaluated_at)),
+      };
 
-  const weeklyApplications = buildWeeklyVolume(applications.map((a) => a.created_at));
+  const weeklyApplications = hasRange
+    ? buildRangeVolume(applications.map((a) => a.created_at), from, to)
+    : buildWeeklyVolume(applications.map((a) => a.created_at));
 
   // System-wide final-call breakdown — "pending" covers anything HR hasn't
   // made a final advanced/declined call on yet (submitted or interview_stage),
@@ -359,6 +413,7 @@ export async function getHeadOverview() {
       topCandidates, jobBreakdown, hrActivity, trends,
       resumeScoreDistribution, categoryBreakdown, weeklyApplications, decisionOutcomes,
       pendingBreakdown, avgTimeToHire, avgTimeToHireByOutcome, recentInterviews,
+      range: { from: from || null, to: to || null },
     },
   };
 }

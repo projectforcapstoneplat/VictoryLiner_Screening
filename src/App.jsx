@@ -17,6 +17,7 @@ import { ResetPassword } from './pages/ResetPassword.jsx';
 import { CreateAccount } from './pages/CreateAccount.jsx';
 import { ResumeForm } from './pages/ResumeForm.jsx';
 import { JobMatches } from './pages/JobMatches.jsx';
+import { MyResume } from './pages/MyResume.jsx';
 import { HrLogin } from './pages/HrLogin.jsx';
 import { HrDashboard } from './pages/HrDashboard.jsx';
 import { HrHeadDashboard } from './pages/HrHeadDashboard.jsx';
@@ -75,9 +76,11 @@ function NotAnApplicant({ nav }) {
 // straight to the login screen. Only read once, on first load.
 //
 // `?screen=` covers the handful of standalone pages that take no props
-// (job/session/application) — safe to deep-link into directly, e.g. opening
-// Terms in a new tab from the Create Account consent checkbox without
-// losing whatever the applicant's already filled in on the original tab.
+// (job/session/application) — safe to deep-link into directly, e.g. from the
+// Footer's "Terms of Service" link, or a bookmark. The Create Account
+// consent checkbox itself no longer routes through here — it shows the same
+// content (Terms.jsx's TERMS_SECTIONS) in an in-page modal instead, so a
+// popup blocker never gets in the way of reading it.
 const DEEP_LINKABLE_SCREENS = ['terms', 'privacy', 'faq', 'contact'];
 const getInitialScreen = () => {
   const params = new URLSearchParams(window.location.search);
@@ -148,8 +151,21 @@ export function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const pendingScreen = params.get('screen');
-    if (pendingScreen === 'my-applications' || pendingScreen === 'resume' || pendingScreen === 'matches') {
+    if (pendingScreen === 'my-applications' || pendingScreen === 'resume' || pendingScreen === 'matches' || pendingScreen === 'my-resume') {
       nav(pendingScreen);
+    }
+    // 'details' carries a specific job (SignIn.jsx bakes `?screen=details
+    // &job=<id>` in for signInWithGoogle when Sign In was reached from a
+    // job's own page) — unlike the plain screens above, this one needs the
+    // actual job object re-fetched by id before nav('details', job) means
+    // anything.
+    if (pendingScreen === 'details') {
+      const jobId = params.get('job');
+      if (jobId) {
+        getJob(jobId).then(({ data }) => {
+          if (data) nav('details', data);
+        });
+      }
     }
     // Only ever meant to run once, against the URL the page loaded with.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,7 +272,7 @@ export function App() {
     // still loads async right after. A signed-out visitor has no session
     // here and skips straight to the form, same as before.
     if (session && !profile) return <LoadingScreen />;
-    return <HrLogin nav={nav} />;
+    return <HrLogin nav={nav} session={session} profile={profile} />;
   }
 
   if (screen === 'resume') {
@@ -273,19 +289,29 @@ export function App() {
     return <JobMatches profile={profile} nav={nav} />;
   }
 
+  if (screen === 'my-resume') {
+    if (!session) return <SignIn nav={nav} redirectTo="my-resume" />;
+    if (!profile) return <LoadingScreen />;
+    if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
+    return <MyResume profile={profile} nav={nav} />;
+  }
+
   if (screen === 'my-applications' || screen === 'interview') {
-    // No job passed to SignIn here — job holds an application object on
-    // this branch, not a job posting, and SignIn's post-login redirect
-    // assumes any job it's given is a job posting. redirectTo sends them
-    // back to My Applications instead of the homepage once signed in.
+    // No job passed to SignIn here — `job` holds an application object on
+    // the 'interview' branch and a job posting id (to focus one card) on
+    // the 'my-applications' branch, neither of which is the job posting
+    // object SignIn's post-login redirect expects. redirectTo sends them
+    // back to My Applications instead of the homepage once signed in
+    // (losing the focus target in that rare signed-out edge case, but this
+    // link only ever appears to an already-signed-in applicant anyway).
     if (!session) return <SignIn nav={nav} redirectTo="my-applications" />;
     if (!profile) return <LoadingScreen />;
     if (profile.role !== 'applicant') return <NotAnApplicant nav={nav} />;
     if (screen === 'interview') return <Interview application={job} profile={profile} nav={nav} />;
-    return <MyApplications profile={profile} nav={nav} />;
+    return <MyApplications profile={profile} nav={nav} focusJobId={job} />;
   }
 
-  if (screen === 'hr-dashboard' || screen === 'hr-jobs' || screen === 'hr-job-form' || screen === 'hr-accounts' || screen === 'hr-applicant-list' || screen === 'interview-questions') {
+  if (screen === 'hr-dashboard' || screen === 'hr-jobs' || screen === 'hr-job-form' || screen === 'hr-accounts' || screen === 'hr-applicant-list' || screen === 'hr-decisions' || screen === 'interview-questions') {
     if (!session) return <HrLogin nav={nav} />;
     if (!profile) return <LoadingScreen />;
     if (!HR_ROLES.includes(profile.role)) return <HrLogin nav={nav} />;
@@ -294,7 +320,16 @@ export function App() {
     // posting — every caller that used to nav('hr-applicants', job, opts)
     // for the old separate per-job page now navs here the same way.
     if (screen === 'hr-applicant-list') return <HrApplicantsList nav={nav} profile={profile} job={job} stageFilter={stageFilter} />;
-    if (screen === 'interview-questions') return <InterviewQuestions profile={profile} nav={nav} />;
+    // Same table, same component, landing pre-filtered to "Awaiting Your
+    // Decision" instead of the unfiltered full directory — see the sidebar
+    // NAV_ITEMS comment in HrShell.jsx for why this is its own tab.
+    if (screen === 'hr-decisions') return <HrApplicantsList nav={nav} profile={profile} stageFilter="pending" />;
+    // `job` is reused here to carry a category string (not a job posting)
+    // when the HR notification bell's "missing questions" alert navs here —
+    // the `job` state slot is otherwise unused by this screen, and every
+    // other screen that reads it always gets a real job object, so a plain
+    // string is an unambiguous signal it's this one case.
+    if (screen === 'interview-questions') return <InterviewQuestions profile={profile} nav={nav} initialCategory={typeof job === 'string' ? job : null} />;
     if (screen === 'hr-jobs') return <HrDashboard nav={nav} profile={profile} />;
     if (screen === 'hr-accounts') {
       if (profile.role !== 'hr_head') return <HrDashboard nav={nav} profile={profile} />;

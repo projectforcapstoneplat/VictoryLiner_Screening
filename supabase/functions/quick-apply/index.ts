@@ -82,7 +82,23 @@ Deno.serve(async (req) => {
       .eq('id', jobId)
       .single();
     if (jobError || !job) {
+      // Covers "not published" too, not just "doesn't exist" — the
+      // job_postings_select_published RLS policy already means a
+      // draft/closed job's row never comes back for an applicant's own
+      // client, so jobError/null here is the only signal needed for that.
       return json({ error: 'Job posting not found.' }, 404);
+    }
+    // RLS only gates *status*, not the deadline — a job left 'published'
+    // past its own application_deadline is still selectable here, and
+    // JobDetails.jsx's "Applications Closed" button is purely a client-side
+    // derived value that a stale open tab (or a direct call) bypasses
+    // entirely. Same day-boundary calculation as src/lib/deadline.js so a
+    // deadline day itself still counts as open on both sides.
+    if (job.application_deadline) {
+      const deadline = new Date(`${job.application_deadline}T23:59:59`);
+      if (deadline.getTime() < Date.now()) {
+        return json({ error: 'The application deadline for this job has passed.' }, 400);
+      }
     }
 
     const { data: match } = await callerClient
@@ -125,6 +141,11 @@ Deno.serve(async (req) => {
         current_location: resume.current_location,
         has_medical_certificate: resume.has_medical_certificate,
         status: clearsThreshold ? 'interview_stage' : 'submitted',
+        // Starts the 3-day video-screening deadline clock right here for the
+        // fast-tracked path — this insert never goes through
+        // updateApplicationStatus (src/lib/applications.js), which is the
+        // only other place that stamps it, so it has to happen in both spots.
+        interview_stage_at: clearsThreshold ? new Date().toISOString() : null,
       })
       .select()
       .single();

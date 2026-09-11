@@ -4,15 +4,17 @@
 // rather than managing individual applicant records directly. This page is
 // that reporting/oversight surface — no advance/decline actions live here;
 // that decision belongs to HrPersonnelDashboard.jsx per the paper's role split.
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { KpiCard } from '../components/dashboard/KpiCard/KpiCard.jsx';
 import { PipelineBar } from '../components/dashboard/PipelineBar/PipelineBar.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
+import { ActionPill } from '../components/core/ActionPill/ActionPill.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getHeadOverview } from '../lib/reports.js';
 import { getScreeningSettings, updateMinResumeMatchPercent, updateInterviewQuestionCount } from '../lib/screeningSettings.js';
 import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
+import { buildCsv, downloadCsv } from '../lib/csvExport.js';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -23,6 +25,86 @@ const KPI_ICONS = {
 };
 
 const RANK_ACCENT = ['#d4af37', '#9aa0a6', '#b56a3f']; // gold / silver / bronze — 4th+ stays plain
+
+const EXPORT_ICON = <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const DATE_RANGE_PRESETS = [
+  { key: 'all', label: 'All Time' },
+  { key: 'last-30', label: 'Last 30 Days' },
+  { key: 'this-month', label: 'This Month' },
+  { key: 'last-month', label: 'Last Month' },
+  { key: 'this-quarter', label: 'This Quarter' },
+  { key: 'custom', label: 'Custom' },
+];
+
+// Every preset resolves to plain 'YYYY-MM-DD' strings (what getHeadOverview
+// and <input type="date"> both expect) — 'all' resolves to {null, null},
+// which getHeadOverview reads as "no filtering, show everything."
+function presetRange(preset) {
+  const now = new Date();
+  const toISO = (d) => d.toISOString().slice(0, 10);
+  if (preset === 'last-30') return { from: toISO(new Date(now.getTime() - 29 * DAY_MS)), to: toISO(now) };
+  if (preset === 'this-month') return { from: toISO(new Date(now.getFullYear(), now.getMonth(), 1)), to: toISO(now) };
+  if (preset === 'last-month') {
+    return {
+      from: toISO(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+      to: toISO(new Date(now.getFullYear(), now.getMonth(), 0)),
+    };
+  }
+  if (preset === 'this-quarter') {
+    const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+    return { from: toISO(new Date(now.getFullYear(), quarterStartMonth, 1)), to: toISO(now) };
+  }
+  return { from: null, to: null };
+}
+
+function formatRangeLabel(from, to) {
+  if (!from && !to) return 'All Time';
+  const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  if (from && to) return `${fmt(from)} – ${fmt(to)}`;
+  if (from) return `Since ${fmt(from)}`;
+  return `Through ${fmt(to)}`;
+}
+
+const DATE_INPUT_STYLE = {
+  padding: '8px 10px', fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)',
+  background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)', border: 'none', borderRadius: 6, color: 'var(--text-primary)',
+};
+
+function DateRangeBar({ preset, setPreset, customFrom, setCustomFrom, customTo, setCustomTo, onGenerateReport, reportReady }) {
+  return (
+    <div className="fade-in-up" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '14px 20px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {DATE_RANGE_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => setPreset(p.key)}
+            style={{
+              padding: '7px 14px', borderRadius: 999, cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600,
+              border: preset === p.key ? 'none' : '1px solid var(--border-hairline)',
+              background: preset === p.key ? 'var(--action-primary-bg)' : 'transparent',
+              color: preset === p.key ? '#fff' : 'var(--text-primary)',
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {preset === 'custom' && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={DATE_INPUT_STYLE} />
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>to</span>
+          <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={DATE_INPUT_STYLE} />
+        </div>
+      )}
+      <Button variant="strong" size="sm" onClick={onGenerateReport} disabled={!reportReady} style={{ marginLeft: 'auto' }}>
+        📄 Generate Report
+      </Button>
+    </div>
+  );
+}
 
 function timeOfDayGreeting() {
   const hour = new Date().getHours();
@@ -65,11 +147,11 @@ function SectionCard({ title, subtitle, action, children, delay = 0 }) {
   return (
     <Reveal delay={delay} className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 28px', display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <div>
+        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
           <strong style={{ fontSize: 'var(--text-lg)', fontFamily: 'var(--font-display)' }}>{title}</strong>
           {subtitle && <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 2 }}>{subtitle}</div>}
         </div>
-        {action}
+        {action && <div style={{ flexShrink: 0 }}>{action}</div>}
       </div>
       {children}
     </Reveal>
@@ -323,6 +405,145 @@ function ScreeningSettingsCard({ profile }) {
   );
 }
 
+// Print-safe fixed colors, same reasoning as MyResume.jsx's own DOC_* set —
+// a report meant to be printed or saved as a PDF shouldn't come out mid-grey
+// because the viewer happened to have dark mode on.
+const DOC_BG = '#ffffff';
+const DOC_TEXT = '#1a1a1a';
+const DOC_MUTED = '#5a5a5a';
+const DOC_RULE = '#d8d8d8';
+const DOC_ACCENT = '#b3121f';
+
+function DocSectionTitle({ children }) {
+  return (
+    <h2 style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: DOC_ACCENT, margin: '0 0 10px', paddingBottom: 6, borderBottom: `1.5px solid ${DOC_RULE}` }}>
+      {children}
+    </h2>
+  );
+}
+
+function DocKpi({ label, value }) {
+  return (
+    <div style={{ flex: '1 1 140px' }}>
+      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
+      <div style={{ fontSize: 12, color: DOC_MUTED, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function DocTable({ columns, rows }) {
+  if (rows.length === 0) return <p style={{ fontSize: 13, color: DOC_MUTED, margin: 0 }}>No data for this period.</p>;
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <thead>
+        <tr>
+          {columns.map((c) => (
+            <th key={c} style={{ textAlign: 'left', padding: '0 10px 8px 0', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: DOC_MUTED, fontWeight: 600 }}>{c}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={i} style={{ borderTop: `1px solid ${DOC_RULE}` }}>
+            {row.map((cell, j) => <td key={j} style={{ padding: '7px 10px 7px 0' }}>{cell}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// A one-page, printable snapshot of whatever period is currently selected —
+// the actual "Generate Report" deliverable. Reuses the same data the live
+// dashboard already fetched (getHeadOverview with the current from/to), so
+// generating it costs no extra request; it's a different *rendering* of
+// data already in hand, not a separate report-building pipeline.
+function HiringReportDocument({ report, onBack }) {
+  const { from, to } = report.range;
+  return (
+    <div>
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          body { background: #fff !important; }
+          .report-doc-wrap { padding: 0 !important; margin: 0 !important; box-shadow: none !important; max-width: 100% !important; }
+          .report-doc-page { box-shadow: none !important; border-radius: 0 !important; }
+        }
+      `}</style>
+
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Hiring Report</h1>
+          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>{formatRangeLabel(from, to)}</p>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Button variant="ghost" size="sm" onClick={onBack}>← Back to Dashboard</Button>
+          <Button variant="strong" size="sm" onClick={() => window.print()}>Print / Save as PDF</Button>
+        </div>
+      </div>
+
+      <div className="report-doc-wrap">
+        <div className="report-doc-page" style={{ background: DOC_BG, color: DOC_TEXT, borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 6vw, 56px)', fontFamily: "'Georgia', 'Times New Roman', serif", lineHeight: 1.5 }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: 0.5 }}>Victory Liner Careers</div>
+            <div style={{ fontSize: 15, marginTop: 4 }}>Hiring Report — {formatRangeLabel(from, to)}</div>
+            <div style={{ fontSize: 12, color: DOC_MUTED, marginTop: 4 }}>Generated {new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' })}</div>
+          </div>
+
+          <div style={{ marginBottom: 24 }}>
+            <DocSectionTitle>Summary</DocSectionTitle>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20 }}>
+              <DocKpi label="Total Applicants" value={report.applicantCount} />
+              <DocKpi label="Published Postings" value={report.jobStats.published} />
+              <DocKpi label="Resumes Screened" value={report.scores.resumeEvaluatedCount} />
+              <DocKpi label="Interviews Completed" value={report.scores.interviewCompletedCount} />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 24 }}>
+            <DocSectionTitle>Hiring Funnel</DocSectionTitle>
+            <DocTable columns={['Stage', 'Count']} rows={report.funnel.map((f) => [f.label, f.value])} />
+          </div>
+
+          <div style={{ marginBottom: 24 }}>
+            <DocSectionTitle>Decision Outcomes</DocSectionTitle>
+            <DocTable
+              columns={['Outcome', 'Count']}
+              rows={[
+                ['Advanced', report.decisionOutcomes.advanced],
+                ['Declined', report.decisionOutcomes.declined],
+                ['Pending', report.decisionOutcomes.pending],
+              ]}
+            />
+            <p style={{ fontSize: 13, color: DOC_MUTED, marginTop: 10 }}>
+              Average time-to-hire: {report.avgTimeToHire != null ? `${report.avgTimeToHire} days` : 'No decisions in this period yet.'}
+            </p>
+          </div>
+
+          <div style={{ marginBottom: 24 }}>
+            <DocSectionTitle>Applications by Category</DocSectionTitle>
+            <DocTable columns={['Category', 'Applicants']} rows={report.categoryBreakdown.map((c) => [c.category, c.count])} />
+          </div>
+
+          <div>
+            <DocSectionTitle>Job Postings</DocSectionTitle>
+            <DocTable
+              columns={['Job', 'Status', 'Applicants', 'Avg. Resume', 'Avg. Interview']}
+              rows={report.jobBreakdown.map(({ job, applicantCount, avgResume, avgInterview }) => [
+                job.title,
+                STATUS_META[job.status]?.label || job.status,
+                applicantCount,
+                avgResume != null ? `${avgResume}%` : '—',
+                avgInterview != null ? `${avgInterview}%` : '—',
+              ])}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HrHeadDashboard({ nav, profile }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
@@ -331,13 +552,36 @@ export function HrHeadDashboard({ nav, profile }) {
   const [scoreMin, setScoreMin] = useState(0);
   const [scoreMax, setScoreMax] = useState(100);
   const [expandedHrId, setExpandedHrId] = useState(null);
+  const [rangePreset, setRangePreset] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [showReport, setShowReport] = useState(false);
+
+  const { from, to } = useMemo(
+    () => (rangePreset === 'custom' ? { from: customFrom || null, to: customTo || null } : presetRange(rangePreset)),
+    [rangePreset, customFrom, customTo],
+  );
 
   useEffect(() => {
-    getHeadOverview().then(({ data, error: err }) => {
+    getHeadOverview({ from, to }).then(({ data, error: err }) => {
       if (err) setError(err.message || 'Failed to load reports.');
-      else setReport(data);
+      else { setReport(data); setError(''); }
     });
-  }, []);
+  }, [from, to]);
+
+  // Switching the date range while the print view is open would leave it
+  // showing a now-stale snapshot with no visible link to the controls that
+  // changed underneath it — simplest correct behavior is just dropping back
+  // to the live dashboard so the new range is visibly in effect.
+  useEffect(() => { setShowReport(false); }, [from, to]);
+
+  if (showReport && report) {
+    return (
+      <HrShell active="hr-dashboard" nav={nav} profile={profile}>
+        <HiringReportDocument report={report} onBack={() => setShowReport(false)} />
+      </HrShell>
+    );
+  }
 
   const categories = report
     ? [...new Set(report.topCandidates.map((c) => c.job?.category).filter(Boolean))].sort((a, b) => a.localeCompare(b))
@@ -352,6 +596,20 @@ export function HrHeadDashboard({ nav, profile }) {
         .sort((a, b) => scoreFor(b, rankBy) - scoreFor(a, rankBy))
         .slice(0, 8)
     : [];
+
+  // Same Export CSV HR Personnel gets on Applicants/Decisions, scoped to
+  // just this widget's own ranked-and-filtered top 8 — a quick reporting
+  // snapshot, not the full operational record (phone, NBI clearance, etc.
+  // from src/lib/applicantResume.js) HR Personnel exports when actually
+  // processing someone, which HR Head has no reason to pull here.
+  function handleExportTopCandidates() {
+    const headers = ['Rank', 'Full Name', 'Email', 'Job Posting', 'Category', 'Resume Match %', 'Interview Match %', 'Overall %'];
+    const rows = filteredCandidates.map((c, i) => [
+      i + 1, c.name, c.email, c.job?.title || '', c.job?.category || '',
+      c.resumeScore ?? '', c.interviewScore ?? '', c.totalScore ?? '',
+    ]);
+    downloadCsv(`top-candidates-${new Date().toISOString().slice(0, 10)}.csv`, buildCsv(headers, rows));
+  }
 
   return (
     <HrShell active="hr-dashboard" nav={nav} profile={profile}>
@@ -371,6 +629,17 @@ export function HrHeadDashboard({ nav, profile }) {
           <Button variant="strong" size="sm" onClick={() => nav('hr-job-form', null)}>+ New Job Posting</Button>
         </Reveal>
 
+        <DateRangeBar
+          preset={rangePreset}
+          setPreset={setRangePreset}
+          customFrom={customFrom}
+          setCustomFrom={setCustomFrom}
+          customTo={customTo}
+          setCustomTo={setCustomTo}
+          onGenerateReport={() => setShowReport(true)}
+          reportReady={Boolean(report)}
+        />
+
         {error && <p style={{ color: 'var(--red-700)' }}>{error}</p>}
         {!report && !error && <p style={{ opacity: 0.7 }}>Loading reports…</p>}
 
@@ -378,7 +647,7 @@ export function HrHeadDashboard({ nav, profile }) {
           <>
             <div className="hr-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
               <KpiCard icon={KPI_ICONS.users} accent="red" label="Total Applicants" value={report.applicantCount} trend={report.trends.applicants} />
-              <KpiCard icon={KPI_ICONS.briefcase} accent="amber" label="Published Postings" value={report.jobStats.published} trend={null} />
+              <KpiCard icon={KPI_ICONS.briefcase} accent="amber" label={(from || to) ? 'Published Postings (current)' : 'Published Postings'} value={report.jobStats.published} trend={null} />
               <KpiCard icon={KPI_ICONS.doc} accent="green" label="Resumes Screened" value={report.scores.resumeEvaluatedCount} trend={report.trends.resumeScreened} />
               <KpiCard icon={KPI_ICONS.video} accent="violet" label="Interviews Completed" value={report.scores.interviewCompletedCount} trend={report.trends.interviewsCompleted} />
             </div>
@@ -453,18 +722,25 @@ export function HrHeadDashboard({ nav, profile }) {
               <SectionCard
                 title="Top Candidates"
                 subtitle="Filter and rank by whichever score matters right now"
-                action={categories.length > 0 && (
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    style={{
-                      fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '6px 10px', borderRadius: 8,
-                      background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
-                    }}
-                  >
-                    <option value="all">All Categories</option>
-                    {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-                  </select>
+                action={(
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {categories.length > 0 && (
+                      <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        style={{
+                          fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '6px 10px', borderRadius: 8,
+                          background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
+                        }}
+                      >
+                        <option value="all">All Categories</option>
+                        {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+                      </select>
+                    )}
+                    {filteredCandidates.length > 0 && (
+                      <ActionPill icon={EXPORT_ICON} tone="neutral" onClick={handleExportTopCandidates} label="Export CSV" />
+                    )}
+                  </div>
                 )}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', paddingBottom: 14, borderBottom: '1px solid var(--border-hairline)' }}>

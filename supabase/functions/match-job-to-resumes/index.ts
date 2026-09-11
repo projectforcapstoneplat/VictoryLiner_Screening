@@ -184,9 +184,22 @@ Deno.serve(async (req) => {
         );
         scoredCount += 1;
 
-        if (score >= effectiveMinPercent && resendKey && resume.email) {
-          const sent = await sendMatchEmail(resendKey, fromEmail, resume.email, resume.full_name, job.title, siteUrl);
-          if (sent) notifiedCount += 1;
+        if (score >= effectiveMinPercent) {
+          // In-website notification — same trigger point as the email
+          // below, so an applicant sees "a job matches you" on their next
+          // visit even if the email never arrives (spam filter, mistyped
+          // address, RESEND_API_KEY not configured yet, etc.).
+          await adminClient.from('applicant_notifications').insert({
+            applicant_id: resume.applicant_id,
+            job_id: jobId,
+            title: `A new opening matches you — ${job.title}`,
+            body: "We compared your resume against this role and it's a strong fit. Take a look and apply if you're interested.",
+          });
+
+          if (resendKey && resume.email) {
+            const sent = await sendMatchEmail(resendKey, fromEmail, resume.email, resume.full_name, job.title, siteUrl);
+            if (sent) notifiedCount += 1;
+          }
         }
       } catch {
         continue;

@@ -26,6 +26,14 @@ const KNOWN_MESSAGES = [
     friendly: 'Too many attempts — please wait a moment before trying again.',
   },
   {
+    match: /signups not allowed for otp/i,
+    friendly: 'We couldn’t find an account with that email address. Double-check for typos.',
+  },
+  {
+    match: /token has expired or is invalid|invalid otp|otp_expired/i,
+    friendly: 'That code is incorrect or has expired. Request a new one and try again.',
+  },
+  {
     match: /network|fetch failed|failed to fetch/i,
     friendly: 'Could not reach the server — check your connection and try again.',
   },

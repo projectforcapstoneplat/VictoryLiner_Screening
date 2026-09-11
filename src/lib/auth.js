@@ -31,6 +31,27 @@ export async function signInWithPassword({ email, password }) {
   return { data, error };
 }
 
+// Email one-time-code sign-in — an alternative to password, not a
+// replacement (Create Account still sets a password; this only signs in to
+// an account that already exists). shouldCreateUser:false is the important
+// part: without it, Supabase's own default behavior is to silently create a
+// brand-new (passwordless) account for any email typed in here, which for
+// the HR portal in particular would mean anyone could type an arbitrary
+// email and get a real signed-in session (still rejected afterward by the
+// HR-role check, but only after actually creating an unwanted profile row).
+export async function sendSignInOtp(email) {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false },
+  });
+  return { error };
+}
+
+export async function verifySignInOtp(email, token) {
+  const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+  return { data, error };
+}
+
 // Google is a full-page redirect away to accounts.google.com and back — the
 // only survivor across that round trip is the URL, since it isn't a page
 // reload of the SPA's own in-memory state (unlike email/password, which
@@ -39,14 +60,30 @@ export async function signInWithPassword({ email, password }) {
 // clicked "Sign in with Google" instead of always landing on the homepage.
 // A new Google account gets a `profiles` row automatically (see the
 // `handle_new_user` trigger in 0001_init.sql), defaulting to the
-// 'applicant' role — this only ever signs applicants in/up, never HR.
-export async function signInWithGoogle({ screen, jobId } = {}) {
+// 'applicant' role.
+//
+// `hr: true` is the HR Portal's own Google button (HrLogin.jsx) — it bakes
+// `?hr=1` in instead of `screen`/`jobId` so the redirect lands back on the
+// hr-login screen, where App.jsx's existing role-check effects take over:
+// an HR-role profile gets auto-navigated to hr-dashboard, anything else
+// (a brand-new Google sign-up defaults to 'applicant', same as the public
+// flow — HR accounts are never self-registered, see supabase/README.md)
+// gets signed back out with an error, exactly like a rejected password
+// sign-in. `hd` optionally restricts Google's own account picker to one
+// Workspace domain ("through company account") when VITE_HR_GOOGLE_DOMAIN
+// is set — harmless no-op if it isn't.
+export async function signInWithGoogle({ screen, jobId, hr } = {}) {
   const url = new URL(window.location.origin + window.location.pathname);
-  if (screen) url.searchParams.set('screen', screen);
-  if (jobId) url.searchParams.set('job', jobId);
+  if (hr) {
+    url.searchParams.set('hr', '1');
+  } else {
+    if (screen) url.searchParams.set('screen', screen);
+    if (jobId) url.searchParams.set('job', jobId);
+  }
+  const hd = hr ? import.meta.env.VITE_HR_GOOGLE_DOMAIN : undefined;
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: url.toString() },
+    options: { redirectTo: url.toString(), ...(hd ? { queryParams: { hd } } : {}) },
   });
   return { error };
 }

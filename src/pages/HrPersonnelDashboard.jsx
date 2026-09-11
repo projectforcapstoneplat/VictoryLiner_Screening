@@ -224,6 +224,15 @@ export function HrPersonnelDashboard({ nav, profile }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
 
+  // Live clock for the header — ticks every 30s, which is plenty for a
+  // "what day/time is it right now" glance and cheap enough not to bother
+  // re-rendering the whole dashboard more often than that.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
   const load = () => {
     getPersonnelOverview().then(({ data, error: err }) => {
       if (err) setError(err.message || 'Failed to load dashboard.');
@@ -241,8 +250,16 @@ export function HrPersonnelDashboard({ nav, profile }) {
     <HrShell active="hr-dashboard" nav={nav} profile={profile} notifications={report?.queue || []}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         <Reveal>
-          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Dashboard</h1>
-          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>Welcome back, {profile?.full_name || profile?.email}.</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Dashboard</h1>
+              <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>Welcome back, {profile?.full_name || profile?.email}.</p>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 'var(--text-sm)' }}>
+              <div style={{ fontWeight: 700 }}>{now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+              <div style={{ opacity: 0.65 }}>{now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</div>
+            </div>
+          </div>
         </Reveal>
 
         {error && <p style={{ color: 'var(--red-700)' }}>{error}</p>}

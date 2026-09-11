@@ -75,13 +75,20 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-    // Client scoped to the caller's own JWT — every read/write below goes
-    // through this client, so it's bound by the caller's own RLS grants
-    // (their own resume, their own match rows) rather than any elevated
-    // service-role access.
+    // Client scoped to the caller's own JWT — every read below goes through
+    // this client, bound by the caller's own RLS grants (their own resume,
+    // their own match rows).
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
+    // resume_job_matches is select/delete-only for the applicant by RLS
+    // (see 0029_resume_job_matches_lockdown.sql) — writing a *score* has to
+    // go through this privileged client instead, the same way quick-apply's
+    // resume_evaluations write and match-job-to-resumes' writes already do.
+    // Reads stay on callerClient throughout; only the actual score write
+    // below is elevated.
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
     const {
       data: { user },
@@ -171,7 +178,7 @@ Deno.serve(async (req) => {
       try {
         const parsed = JSON.parse(text);
         const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0)));
-        await callerClient.from('resume_job_matches').upsert(
+        await adminClient.from('resume_job_matches').upsert(
           {
             applicant_id: user.id,
             job_id: job.id,
