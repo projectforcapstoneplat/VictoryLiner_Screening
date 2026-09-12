@@ -4,27 +4,45 @@
 // implementations of the same chart.
 
 // A three-way proportional split (positive/neutral/negative) as one
-// segmented bar plus a legend — distinct from HorizontalBarChart below
-// because these three values are parts of one whole (sum to 100%), not
-// independent magnitudes to compare side by side.
+// segmented bar, plus a big-number stat block per sentiment below it —
+// distinct from HorizontalBarChart below because these three values are
+// parts of one whole (sum to 100%), not independent magnitudes to compare
+// side by side. The stat row (not just the thin bar + dot legend this used
+// to be) is what actually fills a full-height dashboard card instead of
+// leaving most of it blank — same big-number treatment as the "Active in
+// Pipeline"/"Average Time-to-Hire" cards elsewhere on these dashboards.
 export function SentimentBar({ sentiment }) {
   const { positive, neutral, negative, total } = sentiment;
   if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No interview responses evaluated yet.</p>;
   const segments = [
     { key: 'positive', label: 'Positive', value: positive, color: '#0ca30c' },
     { key: 'neutral', label: 'Neutral', value: neutral, color: 'var(--gray-500)' },
-    { key: 'negative', label: 'Negative', value: negative, color: '#d03b3b' },
+    { key: 'negative', label: 'Negative', value: negative, color: 'var(--red-700)' },
   ];
   return (
     <div>
       <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', gap: 2 }}>
         {segments.map((s) => s.value > 0 && <div key={s.key} title={`${s.label}: ${s.value}`} style={{ width: `${(s.value / total) * 100}%`, background: s.color, transition: 'width 0.8s ease' }} />)}
       </div>
-      <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
-        {segments.map((s) => (
-          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-            <span>{s.label} ({s.value})</span>
+      <div style={{ display: 'flex', gap: 0, marginTop: 20 }}>
+        {segments.map((s, i) => (
+          <div
+            key={s.key}
+            style={{
+              flex: 1, textAlign: 'center', padding: '0 8px',
+              borderLeft: i > 0 ? '1px solid var(--border-hairline)' : 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 'var(--text-xs)', opacity: 0.65, marginBottom: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+              {s.label}
+            </div>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-3xl)', color: s.value > 0 ? s.color : 'var(--text-primary)', opacity: s.value > 0 ? 1 : 0.35 }}>
+              {s.value}
+            </div>
+            <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55, marginTop: 2 }}>
+              {total > 0 ? Math.round((s.value / total) * 100) : 0}%
+            </div>
           </div>
         ))}
       </div>

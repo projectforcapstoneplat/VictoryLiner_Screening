@@ -7,6 +7,15 @@
   box-sizing: border-box;
 }
 
+/* Edge (and some Chrome builds) inject their own built-in show/hide icon
+   into every password input — stacking visibly next to FloatingInput's own
+   custom eye-toggle button otherwise, reading as one field with two eye
+   icons instead of one. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
 :root {
   color-scheme: light;
 }

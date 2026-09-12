@@ -4,6 +4,19 @@
 // Error Rate (via transcription), Sentiment Analysis, and Response Relevance
 // metrics. Server-side because it holds the Gemini API key. Result is written
 // to interview_evaluations so HR only pays the AI cost once per answer.
+//
+// Callable by HR (as before, reviewing an applicant's row) OR by the
+// applicant who owns the response — the latter is what lets
+// notifyResponseSubmitted (src/lib/interview.js) trigger evaluation the
+// moment each answer is submitted, so by the time HR opens the row (or gets
+// the "interview completed" email — see send-interview-completed-email) the
+// score is already there instead of a multi-second wait per answer.
+// Ownership is enforced by RLS itself: the interview_responses select below
+// only succeeds for HR or for the applicant who owns that response
+// (interview_responses_select_own/select_hr, migration 0006), so there's no
+// separate role check needed here. interview_evaluations itself has no
+// applicant-facing write policy though (by design — applicants never see
+// their own AI scores), so the actual write uses the service-role client.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
@@ -50,6 +63,8 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
@@ -62,18 +77,9 @@ Deno.serve(async (req) => {
       return json({ error: 'Not authenticated.' }, 401);
     }
 
-    const { data: callerProfile } = await callerClient
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (!callerProfile || !['hr_personnel', 'hr_head'].includes(callerProfile.role)) {
-      return json({ error: 'Only HR can request interview evaluations.' }, 403);
-    }
-
     // Generous limit — this fires automatically once per un-evaluated answer
-    // when HR opens a job's Applicants list, so it can legitimately burst.
+    // when HR opens a job's Applicants list (or once per answer, right as an
+    // applicant submits it), so it can legitimately burst.
     if (await checkRateLimit(callerClient, user.id, 'evaluate-interview-response', 60, 10)) {
       return json({ error: 'Too many requests — please wait a few minutes and try again.' }, 429);
     }
@@ -105,7 +111,12 @@ Deno.serve(async (req) => {
     const bytes = new Uint8Array(await videoBlob.arrayBuffer());
     const base64Video = toBase64(bytes);
 
-    const userPrompt = `Interview Question: ${response.interview_questions?.question_text ?? '(unknown question)'}`;
+    // The snapshot taken when this question was assigned, not the live
+    // question bank — grading an old answer's relevance against wording HR
+    // edited afterward would judge it against a question the applicant
+    // never actually saw.
+    const questionText = response.question_text_snapshot ?? response.interview_questions?.question_text ?? '(unknown question)';
+    const userPrompt = `Interview Question: ${questionText}`;
 
     const { ok: geminiOk, status: geminiStatus, body: geminiBody } = await callGemini(GEMINI_MODEL, {
       contents: [
@@ -144,7 +155,7 @@ Deno.serve(async (req) => {
     const clamp = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
     const sentimentLabel = SENTIMENT_LABELS.includes(parsed.sentimentLabel) ? parsed.sentimentLabel : 'neutral';
 
-    const { data: saved, error: saveError } = await callerClient
+    const { data: saved, error: saveError } = await adminClient
       .from('interview_evaluations')
       .upsert(
         {
