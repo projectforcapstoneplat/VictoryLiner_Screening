@@ -782,7 +782,7 @@ export function HrHeadDashboard({ nav, profile }) {
                   </div>
                 )}
               </SectionCard>
-              <SectionCard title="Interview Sentiment" subtitle="NLP sentiment across all evaluated answers" delay={0.06}>
+              <SectionCard title="How Applicants Are Coming Across" subtitle="AI-read tone across every evaluated video answer" delay={0.06}>
                 <SentimentBar sentiment={report.sentiment} />
                 <div style={{ display: 'flex', gap: 24, borderTop: '1px solid var(--border-hairline)', paddingTop: 16, marginTop: 4 }}>
                   <div>

@@ -156,7 +156,20 @@ export function HrDashboard({ nav, profile }) {
 
   const handleDelete = async (job) => {
     if (!window.confirm(`Delete "${job.title}"? This cannot be undone.`)) return;
-    await deleteJob(job.id);
+    const { error } = await deleteJob(job.id);
+    if (error) {
+      // 23503 = foreign_key_violation — job_postings has no cascade from
+      // applications (deliberately: deleting a job should never silently
+      // take a candidate's whole application history with it), so a job
+      // that already has applicants can't be deleted outright. Previously
+      // this just failed with nothing shown — the list would re-render
+      // with the job still sitting right there and no explanation why.
+      const message = error.code === '23503'
+        ? `"${job.title}" already has applicants, so it can't be deleted — close it instead (Job Openings keeps a full record of who applied), or remove its applications first if you really need it gone.`
+        : `Could not delete "${job.title}": ${error.message}`;
+      window.alert(message);
+      return;
+    }
     reload();
   };
 

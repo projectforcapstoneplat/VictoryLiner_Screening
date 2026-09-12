@@ -6,8 +6,9 @@ import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
-import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
+import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview, rerollQuestion } from '../lib/interview.js';
 import { notifyHrInterviewCompleted } from '../lib/applications.js';
+import { evaluateResponse } from '../lib/interviewEvaluation.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
 import { MAX_ATTEMPTS } from '../lib/interviewConstants.js';
@@ -277,7 +278,7 @@ function DeviceCheck({ onContinue }) {
 // applicant clicks Start — so there's no window to read the question and go
 // search for an answer before recording. Once revealed, a 5-second "get
 // ready" countdown auto-starts recording, which auto-stops after 1 minute.
-function AnswerRecorder({ response, index, total, applicantId, applicationId, onSubmitted }) {
+function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, usedQuestionIds, onSubmitted, onRerolled }) {
   const [mode, setMode] = useState(response.video_path ? 'submitted' : 'locked');
   const [revealed, setRevealed] = useState(!!response.video_path);
   const [stream, setStream] = useState(null);
@@ -292,6 +293,8 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState('');
   const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
+  const [rerolling, setRerolling] = useState(false);
+  const [rerollNotice, setRerollNotice] = useState('');
   const [recovery, setRecovery] = useState(null);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [transcriptAttempted, setTranscriptAttempted] = useState(false);
@@ -515,13 +518,46 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
     setRequestingCamera(false);
   };
 
-  const reRecord = () => {
+  // Hands back a different, not-yet-used question instead of re-asking the
+  // same one — otherwise "re-record" would just be a free chance to prepare
+  // a rehearsed answer for a question the applicant has now already seen
+  // once. Falls back to a plain re-record of the same question only if the
+  // category's bank has nothing left to swap to (see rerollQuestion's own
+  // comment in src/lib/interview.js).
+  const reRecord = async () => {
     if (attemptCount >= MAX_ATTEMPTS) return;
+    setRerolling(true);
+    setError('');
+    setRerollNotice('');
+    const { data, error: rerollErr } = await rerollQuestion(applicationId, response.question_id, jobCategory, usedQuestionIds);
+    setRerolling(false);
+    if (rerollErr) {
+      if (rerollErr.code === 'no_spare_questions') {
+        setRerollNotice("No other questions available yet — you'll re-record this same one.");
+      } else {
+        setError(rerollErr.message || 'Could not load a new question. Please try again.');
+        return;
+      }
+    } else {
+      onRerolled(data);
+    }
     setRecordedBlob(null);
+    setTaglish(null);
+    setShowTaglish(false);
+    setLiveTranscript('');
+    setTranscriptAttempted(false);
     beginCountdown();
   };
 
   const submit = async () => {
+    // Final attempt — once this uploads, neither re-record nor reroll is
+    // offered again for this question (see atAttemptLimit below), so this
+    // is the applicant's last chance to back out and re-watch their take
+    // before it's locked in.
+    if (attemptCount >= MAX_ATTEMPTS) {
+      const proceed = window.confirm("This is your last attempt for this question — once submitted, you won't be able to re-record or try a different question here. Submit this answer as final?");
+      if (!proceed) return;
+    }
     setUploading(true);
     setError('');
     const { data, error: uploadError } = await uploadResponseVideo({
@@ -538,6 +574,13 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
     clearRecoveryChunks(applicationId, response.question_id);
     setMode('submitted');
     onSubmitted(data);
+    // Best-effort, fire-and-forget — evaluates this answer right now instead
+    // of leaving it until HR happens to open this applicant's row. Not
+    // awaited: the applicant moves on immediately, scoring happens in the
+    // background. A failure here just means this one answer waits for HR's
+    // own on-open evaluation later (see loadDetail in HrApplicantsList.jsx),
+    // same as it always has.
+    evaluateResponse(data.id);
   };
 
   const resumeRecovery = () => {
@@ -560,7 +603,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
     }
     setTranslating(true);
     setTranslateError('');
-    const { data, error: tError } = await translateToTaglish(response.interview_questions?.question_text || '');
+    const { data, error: tError } = await translateToTaglish(response.question_text_snapshot || response.interview_questions?.question_text || '');
     setTranslating(false);
     if (tError) {
       setTranslateError(tError);
@@ -570,7 +613,10 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
     setShowTaglish(true);
   };
 
-  const questionText = response.interview_questions?.question_text;
+  // The snapshot taken when this question was assigned — not the live
+  // question bank, so this applicant sees the exact wording they were
+  // actually given even if HR edits the question afterward.
+  const questionText = response.question_text_snapshot || response.interview_questions?.question_text;
   const displayedQuestion = showTaglish && taglish ? taglish : questionText;
   const attemptsLeft = MAX_ATTEMPTS - attemptCount;
   const atAttemptLimit = attemptCount >= MAX_ATTEMPTS;
@@ -621,6 +667,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
           <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
           {translateError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 8 }}>{translateError}</div>}
           {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
+          {rerollNotice && <div style={{ color: 'var(--text-primary)', opacity: 0.65, fontSize: 'var(--text-xs)', marginBottom: 10 }}>{rerollNotice}</div>}
 
           {mode === 'submitted' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -628,7 +675,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
               {atAttemptLimit ? (
                 <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts for this question.</span>
               ) : (
-                <Button variant="ghost" size="sm" onClick={reRecord}>Re-record ({attemptsLeft} left)</Button>
+                <Button variant="ghost" size="sm" onClick={reRecord} disabled={rerolling}>{rerolling ? 'Loading New Question…' : `Try a Different Question (${attemptsLeft} left)`}</Button>
               )}
             </div>
           )}
@@ -684,7 +731,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, on
                 {atAttemptLimit ? (
                   <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts — this take is final.</span>
                 ) : (
-                  <Button variant="ghost" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>
+                  <Button variant="ghost" size="sm" onClick={reRecord} disabled={uploading || rerolling}>{rerolling ? 'Loading New Question…' : `Try a Different Question (${attemptsLeft} left)`}</Button>
                 )}
               </div>
             </div>
@@ -744,6 +791,13 @@ export function Interview({ application, profile, nav }) {
       if (justCompletedInterview(rs, next)) notifyHrInterviewCompleted(application.id);
       return next;
     });
+  };
+
+  // Matched by the response row's own stable id, not question_id — that's
+  // exactly the field a reroll changes, so matching on it here would never
+  // find the row to replace.
+  const handleRerolled = (updated) => {
+    setResponses((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
   };
 
   const backButton = (
@@ -811,7 +865,10 @@ export function Interview({ application, profile, nav }) {
                   total={responses.length}
                   applicantId={profile.id}
                   applicationId={application.id}
+                  jobCategory={application.job_postings?.category || ''}
+                  usedQuestionIds={responses.map((row) => row.question_id)}
                   onSubmitted={handleSubmitted}
+                  onRerolled={handleRerolled}
                 />
               </Reveal>
             ))}

@@ -120,6 +120,7 @@ export function InterviewQuestions({ profile, nav, initialCategory }) {
   const [suggestError, setSuggestError] = useState('');
   const [addingManual, setAddingManual] = useState(false);
   const [addError, setAddError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
   const [questionCount, setQuestionCount] = useState(3);
 
   useEffect(() => {
@@ -181,7 +182,12 @@ export function InterviewQuestions({ profile, nav, initialCategory }) {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this question? This cannot be undone.')) return;
-    await deleteQuestion(id);
+    setDeleteError('');
+    const { error } = await deleteQuestion(id);
+    if (error) {
+      setDeleteError(error.message || 'Could not delete this question. Please try again.');
+      return;
+    }
     setQuestions((qs) => qs.filter((q) => q.id !== id));
     setAllQuestions((qs) => qs.filter((q) => q.id !== id));
   };
@@ -286,6 +292,7 @@ export function InterviewQuestions({ profile, nav, initialCategory }) {
               </p>
             )}
             {suggestError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)' }}>{suggestError}</div>}
+            {deleteError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)' }}>{deleteError}</div>}
 
             {questions.length === 0 && drafts.length === 0 ? (
               <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7 }}>No questions yet for this category. Add one below or ask AI for a starting set.</p>

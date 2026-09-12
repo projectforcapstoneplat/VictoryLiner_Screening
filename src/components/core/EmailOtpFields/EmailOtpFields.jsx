@@ -68,7 +68,11 @@ export function EmailOtpFields({ email, idPrefix = 'otp', onVerified, onError })
       <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0, textAlign: 'center' }}>
         We emailed a code to <strong>{email}</strong>.
       </p>
-      <FloatingInput id={`${idPrefix}-code`} label="6-Digit Code" type="text" value={code} onChange={(e) => setCode(e.target.value)} />
+      {/* Not "6-Digit Code" — Supabase's own OTP length isn't something this
+          app configures/guarantees, so hardcoding a digit count here risked
+          reading as wrong (it has). "Sign-In Code" describes the field
+          without promising a specific length. */}
+      <FloatingInput id={`${idPrefix}-code`} label="Sign-In Code" type="text" value={code} onChange={(e) => setCode(e.target.value)} />
       <Button variant="strong" size="lg" onClick={handleVerify} disabled={verifying}>
         {verifying ? 'Verifying…' : 'Verify & Sign In'}
       </Button>

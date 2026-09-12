@@ -10,9 +10,8 @@ import { PipelineBar } from '../components/dashboard/PipelineBar/PipelineBar.jsx
 import { Button } from '../components/core/Button/Button.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { getPersonnelOverview } from '../lib/reports.js';
-import { updateApplicationStatus, notifyApplicantStatusChange } from '../lib/applications.js';
-import { getSignedVideoUrl } from '../lib/interviewEvaluation.js';
 import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
+import { scoreColor as scoreTone } from '../lib/scoreTone.js';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -35,13 +34,6 @@ function initials(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase();
 }
 
-function scoreTone(score) {
-  if (score == null) return 'var(--gray-500)';
-  if (score >= 80) return '#0ca30c';
-  if (score >= 60) return '#c98500';
-  return '#d03b3b';
-}
-
 function SectionCard({ title, subtitle, action, children, style, delay = 0 }) {
   return (
     <Reveal delay={delay} className="hover-lift" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 28px', display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0, ...style }}>
@@ -57,114 +49,39 @@ function SectionCard({ title, subtitle, action, children, style, delay = 0 }) {
   );
 }
 
-function ScreeningQueue({ queue, onDecide, profile }) {
-  const [answerIndex, setAnswerIndex] = useState(0);
-  const [videoUrl, setVideoUrl] = useState(null);
-  const [deciding, setDeciding] = useState(false);
-  const candidate = queue[0];
-  const answer = candidate?.interviewAnswers?.[answerIndex];
-
-  useEffect(() => {
-    setAnswerIndex(0);
-  }, [candidate?.applicationId]);
-
-  useEffect(() => {
-    setVideoUrl(null);
-    if (!answer?.response?.video_path) return;
-    let cancelled = false;
-    getSignedVideoUrl(answer.response.video_path).then(({ data }) => {
-      if (!cancelled) setVideoUrl(data);
-    });
-    return () => { cancelled = true; };
-  }, [answer?.response?.video_path]);
-
-  if (!candidate) {
+// Replaced the old one-candidate-at-a-time Advance/Decline widget that used
+// to live here — it quietly duplicated the Decisions tab (built later,
+// specifically to replace this exact workflow with a full ranked list HR
+// can filter instead of working one row at a time), so the dashboard ended
+// up with two different places to make the same kind of call. This is a
+// pure pointer now: no decide buttons, just "here's how many, go there."
+function ReadyForDecisionSummary({ queue, nav }) {
+  if (queue.length === 0) {
     return (
-      <SectionCard title="Applicant Video Screening Queue" subtitle="Review and evaluate shortlisted candidates">
+      <SectionCard title="Ready for Your Decision" subtitle="Candidates who've cleared screening and are awaiting a call">
         <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No candidates waiting on a decision right now — you&rsquo;re all caught up.</p>
       </SectionCard>
     );
   }
-
-  const handleDecide = async (status) => {
-    setDeciding(true);
-    const { error } = await updateApplicationStatus(candidate.applicationId, status, profile?.id);
-    setDeciding(false);
-    if (error) {
-      window.alert(`Could not update this application: ${error.message}`);
-    } else {
-      notifyApplicantStatusChange(candidate.applicationId, status);
-    }
-    onDecide(candidate.applicationId);
-  };
-
-  const answers = candidate.interviewAnswers || [];
-
+  const preview = queue.slice(0, 4);
   return (
-    <SectionCard title="Applicant Video Screening Queue" subtitle="Review and evaluate shortlisted candidates">
-      <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 24 }}>
-        <div>
-          <div style={{ position: 'relative', background: '#000', borderRadius: 12, overflow: 'hidden', aspectRatio: '16 / 9' }}>
-            {answer?.response?.interview_questions?.question_text && (
-              <div style={{ position: 'absolute', top: 10, left: 12, right: 12, color: '#fff', fontSize: 'var(--text-xs)', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
-                Question {answerIndex + 1} of {answers.length}
-                <div style={{ fontWeight: 600, marginTop: 2 }}>{answer.response.interview_questions.question_text}</div>
-              </div>
-            )}
-            {videoUrl ? (
-              <video key={videoUrl} src={videoUrl} controls style={{ width: '100%', height: '100%', display: 'block' }} />
-            ) : (
-              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.6)', fontSize: 'var(--text-sm)' }}>
-                {answers.length === 0 ? 'No recorded answers.' : 'Loading video…'}
-              </div>
-            )}
-          </div>
-          {answers.length > 1 && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              {answers.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setAnswerIndex(i)}
-                  style={{
-                    flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 700,
-                    background: i === answerIndex ? 'var(--action-primary-bg)' : 'var(--surface-page-alt)',
-                    color: i === answerIndex ? '#fff' : 'var(--text-primary)',
-                  }}
-                >
-                  Answer {i + 1}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <strong style={{ fontSize: 'var(--text-lg)' }}>{candidate.name}</strong>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: '#e3f6e6', color: '#0ca30c' }}>Ready</span>
-            </div>
-            <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7 }}>{candidate.job?.title}</div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 'var(--text-sm)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.6 }}>Applied on</span><span>{new Date(candidate.createdAt).toLocaleDateString()}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.6 }}>Resume Score</span><span style={{ fontWeight: 700, color: scoreTone(candidate.resumeScore) }}>{candidate.resumeScore}%</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.6 }}>Interview Score</span><span style={{ fontWeight: 700, color: scoreTone(candidate.interviewScore) }}>{candidate.interviewScore}%</span></div>
-            {candidate.skills?.length > 0 && (
-              <div>
-                <span style={{ opacity: 0.6 }}>Skills</span>
-                <div style={{ marginTop: 4 }}>{candidate.skills.slice(0, 6).join(', ')}</div>
-              </div>
-            )}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 'auto' }}>
-            <Button variant="strong" size="sm" onClick={() => handleDecide('advanced')} disabled={deciding}>
-              {deciding ? 'Saving…' : '✓ Advance'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => handleDecide('declined')} disabled={deciding}>✕ Decline</Button>
-          </div>
-        </div>
+    <SectionCard title="Ready for Your Decision" subtitle="Candidates who've cleared screening and are awaiting a call">
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 16 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-6xl)', color: 'var(--action-primary-bg)' }}>{queue.length}</span>
+        <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>waiting on an Advance/Decline call</span>
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {preview.map((c) => (
+          <div key={c.applicationId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-sm)' }}>
+            <span style={{ fontWeight: 600 }}>{c.name}</span>
+            <span style={{ opacity: 0.6 }}>{c.job?.title}</span>
+          </div>
+        ))}
+        {queue.length > preview.length && (
+          <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55 }}>+{queue.length - preview.length} more</div>
+        )}
+      </div>
+      <Button variant="strong" size="sm" onClick={() => nav('hr-decisions')}>Go to Decisions</Button>
     </SectionCard>
   );
 }
@@ -242,10 +159,6 @@ export function HrPersonnelDashboard({ nav, profile }) {
 
   useEffect(load, []);
 
-  const handleDecide = (applicationId) => {
-    setReport((r) => (r ? { ...r, queue: r.queue.filter((c) => c.applicationId !== applicationId) } : r));
-  };
-
   return (
     <HrShell active="hr-dashboard" nav={nav} profile={profile} notifications={report?.queue || []}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -275,7 +188,7 @@ export function HrPersonnelDashboard({ nav, profile }) {
             </div>
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, alignItems: 'start' }}>
-              <ScreeningQueue queue={report.queue} onDecide={handleDecide} profile={profile} />
+              <ReadyForDecisionSummary queue={report.queue} nav={nav} />
               <SectionCard title="Hiring Progress" subtitle="Top job postings by applicant volume" delay={0.06}>
                 {report.jobBreakdown.length === 0 ? (
                   <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications yet.</p>
@@ -304,7 +217,7 @@ export function HrPersonnelDashboard({ nav, profile }) {
               <SectionCard title="Resume Score Distribution" subtitle="Where your current applicant pool clusters" delay={0.06}>
                 <HorizontalBarChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
               </SectionCard>
-              <SectionCard title="Interview Sentiment" subtitle="NLP sentiment across all evaluated answers" delay={0.08}>
+              <SectionCard title="How Applicants Are Coming Across" subtitle="AI-read tone across every evaluated video answer" delay={0.08}>
                 <SentimentBar sentiment={report.sentiment} />
               </SectionCard>
             </div>

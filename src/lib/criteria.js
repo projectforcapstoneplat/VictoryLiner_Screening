@@ -11,18 +11,45 @@ export async function listCriteriaForJob(jobId) {
 
 // Criteria are edited as a whole list in the job posting form, so saving
 // replaces the full set for a job rather than diffing individual rows.
+//
+// Also invalidates every applicant's resume score for this job if the
+// criteria actually changed — an AI score is only meaningful relative to
+// whatever it was weighed against, and without this, an applicant scored
+// under the *old* criteria kept showing that score forever even after HR
+// retuned what the job actually screens for, with nothing to indicate it
+// was stale. Deleting (rather than just flagging) reuses the same "no
+// evaluation on file yet" safety net HrApplicantsList.jsx already has for
+// a resume that's never been scored — it re-evaluates automatically the
+// next time HR opens that applicant's row.
 export async function replaceCriteriaForJob(jobId, criteria) {
-  const { error: deleteError } = await supabase.from('criteria').delete().eq('job_id', jobId);
-  if (deleteError) return { error: deleteError };
-
+  const { data: existing } = await supabase.from('criteria').select('keyword, weight').eq('job_id', jobId).order('keyword');
   const rows = criteria
     .filter((c) => c.keyword.trim())
     .map((c) => ({ job_id: jobId, keyword: c.keyword.trim(), weight: Number(c.weight) || 1 }));
+  const normalize = (list) => [...list]
+    .map((c) => `${c.keyword.trim().toLowerCase()}:${Number(c.weight) || 1}`)
+    .sort()
+    .join('|');
+  const changed = normalize(existing || []) !== normalize(rows);
 
-  if (rows.length === 0) return { data: [] };
+  const { error: deleteError } = await supabase.from('criteria').delete().eq('job_id', jobId);
+  if (deleteError) return { error: deleteError };
 
-  const { data, error } = await supabase.from('criteria').insert(rows).select();
-  return { data, error };
+  let data = [];
+  if (rows.length > 0) {
+    const inserted = await supabase.from('criteria').insert(rows).select();
+    if (inserted.error) return { error: inserted.error };
+    data = inserted.data;
+  }
+
+  if (changed) {
+    // Best-effort — a failed invalidation never blocks the criteria save
+    // that already succeeded; worst case a stale score lingers until HR
+    // notices and manually re-evaluates that one applicant.
+    await supabase.from('resume_evaluations').delete().eq('job_id', jobId);
+  }
+
+  return { data };
 }
 
 // AI-drafted starting point for the criteria list — HR reviews and edits

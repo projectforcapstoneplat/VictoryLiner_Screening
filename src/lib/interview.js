@@ -54,7 +54,10 @@ export async function ensureAssignedResponses(application, jobCategory, question
   }
   const selected = pool.slice(0, questionCount);
 
-  const rows = selected.map((q) => ({ application_id: application.id, question_id: q.id }));
+  // Snapshot the wording as of right now — if HR edits this question's text
+  // later, this applicant's answer still displays (and gets AI-evaluated)
+  // against what they actually saw, not a retroactively-changed version.
+  const rows = selected.map((q) => ({ application_id: application.id, question_id: q.id, question_text_snapshot: q.question_text }));
   const { data: inserted, error: insertError } = await supabase
     .from('interview_responses')
     .insert(rows)
@@ -111,6 +114,50 @@ export async function recordAttempt(applicationId, questionId, attemptCount) {
     .eq('application_id', applicationId)
     .eq('question_id', questionId);
   return { error };
+}
+
+// Swaps a response's assigned question for a different, unused one from the
+// same category pool, instead of a plain re-record that just re-asks the
+// exact same question. Re-recording the same question let an applicant see
+// it once, then prepare/rehearse a polished answer for the retake — this
+// closes that: every re-record costs an attempt (recordAttempt still runs
+// as normal on the next take) AND hands back a question they haven't seen
+// yet, same as the first one being hidden until they start. `usedQuestionIds`
+// should include every question_id already assigned across this whole
+// application's responses (the current one included), so the same question
+// never gets handed out twice in one interview.
+//
+// Needs the category's bank to actually have spares beyond what's assigned
+// (see InterviewQuestions.jsx's own "keep the bank bigger than the
+// configured count" guidance) — if every question in the category is
+// already in use, there's nothing left to swap to.
+//
+// Note: the old take's video file at the previous question_id's storage
+// path is left in place (not deleted) — a minor orphaned-file cost, not a
+// functional issue, since the new take uploads under the new question_id's
+// own path (see uploadResponseVideo below).
+export async function rerollQuestion(applicationId, currentQuestionId, jobCategory, usedQuestionIds) {
+  const { data: candidates, error: poolError } = await supabase
+    .from('interview_questions')
+    .select('id, question_text')
+    .ilike('category', jobCategory.trim());
+  if (poolError) return { error: poolError };
+
+  const usedSet = new Set(usedQuestionIds);
+  const eligible = (candidates || []).filter((q) => !usedSet.has(q.id));
+  if (eligible.length === 0) {
+    return { error: { code: 'no_spare_questions', message: 'No other questions are available in this category yet.' } };
+  }
+  const next = eligible[Math.floor(Math.random() * eligible.length)];
+
+  const { data, error } = await supabase
+    .from('interview_responses')
+    .update({ question_id: next.id, question_text_snapshot: next.question_text, video_path: null, status: 'pending', submitted_at: null })
+    .eq('application_id', applicationId)
+    .eq('question_id', currentQuestionId)
+    .select('*, interview_questions(question_text)')
+    .single();
+  return { data, error };
 }
 
 // A 1-minute webm recording at a normal bitrate is nowhere near this — it's

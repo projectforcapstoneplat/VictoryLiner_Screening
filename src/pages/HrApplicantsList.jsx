@@ -37,6 +37,7 @@ import {
 import { buildCsv, downloadCsv } from '../lib/csvExport.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
 import { MAX_ATTEMPTS } from '../lib/interviewConstants.js';
+import { scoreColor } from '../lib/scoreTone.js';
 
 const SCORE_TYPE_OPTIONS = [
   { value: 'total', label: 'Resume + Interview (Combined)' },
@@ -125,7 +126,7 @@ function ScoreBadge({ score, status, label, emphasis }) {
       display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 72,
       ...(emphasis ? { background: 'var(--pink-100)', borderRadius: 12, padding: '10px 8px' } : null),
     }}>
-      <span style={{ fontSize: emphasis ? 'var(--text-3xl)' : 'var(--text-2xl)', fontWeight: 800, color: emphasis ? 'var(--action-primary-bg)' : 'var(--text-primary)' }}>{score}%</span>
+      <span style={{ fontSize: emphasis ? 'var(--text-3xl)' : 'var(--text-2xl)', fontWeight: 800, color: emphasis ? scoreColor(score) : 'var(--text-primary)' }}>{score}%</span>
       <span style={{ fontSize: 'var(--text-xs)', opacity: emphasis ? 0.75 : 0.6, textAlign: 'center', fontWeight: emphasis ? 700 : 400, color: emphasis ? 'var(--red-700)' : undefined }}>{label}</span>
     </div>
   );
@@ -186,7 +187,10 @@ async function handleWatch(videoPath) {
 function InterviewResponseRow({ response, evaluation, status, errorMessage, onRetry, onResetAttempts }) {
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--gray-100)' }}>
-      <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{response.interview_questions?.question_text}</div>
+      {/* The snapshot from when this question was assigned, not the live
+          question bank — if HR has since edited this question's wording,
+          this answer still shows against what the applicant actually saw. */}
+      <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{response.question_text_snapshot || response.interview_questions?.question_text}</div>
       {!response.video_path ? (
         response.attempt_count >= MAX_ATTEMPTS ? (
           <div style={{ marginTop: 4 }}>
@@ -614,7 +618,13 @@ const RANK_MEDAL = ['🥇', '🥈', '🥉'];
 // One candidate within a job's ranked group — Advance/Decline both open the
 // review modal (handleRequestReview) instead of deciding straight from
 // here, same reasoning as the modal's own comment above.
-function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelectMode, selected, onToggleSelect, compareMode, compareSelected, compareDisabled, onToggleCompare }) {
+function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelectMode, selected, onToggleSelect, compareMode, compareSelected, compareDisabled, onToggleCompare, positionsFilled }) {
+  // Only the final call (interview_stage -> advanced) actually spends a
+  // position — advancing someone from submitted into the video-interview
+  // stage doesn't, so the tag only applies to candidates one decision away
+  // from actually filling a slot that's already gone. Purely informational
+  // — Advance/Decline stay fully clickable either way, still HR's call.
+  const showPositionsFilledTag = positionsFilled && s.status === 'interview_stage';
   const isTop = rank === 1;
   return (
     <div
@@ -649,7 +659,14 @@ function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelect
         {RANK_MEDAL[rank - 1] || `#${rank}`}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)' }}>{s.name}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700, fontSize: 'var(--text-sm)' }}>{s.name}</span>
+          {showPositionsFilledTag && (
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: '#fff4e0', color: '#a3690b', whiteSpace: 'nowrap' }}>
+              Positions already filled
+            </span>
+          )}
+        </div>
         <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{s.email}</div>
       </div>
       <div style={{ display: 'flex', gap: 18, flexShrink: 0 }}>
@@ -838,9 +855,14 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
 
     // Same safety net for any answered interview response that's either
     // never been evaluated, or whose cached evaluation was just excluded
-    // above as stale — interviewEvalMap only has the fresh ones.
+    // above as stale — interviewEvalMap only has the fresh ones. Run
+    // concurrently, not one at a time — each is an independent video+Gemini
+    // call taking several seconds on its own, so evaluating e.g. 3 answers
+    // sequentially meant waiting for the *sum* of all three instead of just
+    // the slowest one. Each iteration only ever touches its own r.id key in
+    // the state maps below, so there's no shared-state race between them.
     const missingInterviewEvals = responses.filter((r) => r.video_path && !interviewEvalMap[r.id]);
-    for (const r of missingInterviewEvals) {
+    await Promise.all(missingInterviewEvals.map(async (r) => {
       setInterviewEvalStatus((s) => ({ ...s, [r.id]: 'evaluating' }));
       const { data, error: evalError } = await evaluateResponse(r.id);
       if (evalError) {
@@ -850,7 +872,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         setInterviewEvaluations((m) => ({ ...m, [r.id]: data }));
         setInterviewEvalStatus((s) => ({ ...s, [r.id]: 'done' }));
       }
-    }
+    }));
   }
 
   async function loadDetail(applicationId) {
@@ -956,7 +978,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   }
 
   async function handleResetAttempts(response) {
-    if (!window.confirm(`Reset attempts for "${response.interview_questions?.question_text || 'this question'}"? They'll be able to record again from their end.`)) return;
+    if (!window.confirm(`Reset attempts for "${response.question_text_snapshot || response.interview_questions?.question_text || 'this question'}"? They'll be able to record again from their end.`)) return;
     const { data, error: resetError } = await resetInterviewAttempts(response.id);
     if (resetError) {
       window.alert(`Could not reset attempts: ${resetError.message || resetError}`);
@@ -1132,6 +1154,16 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
       });
   }, [scored, categoryFilter, jobFilter, activeStageFilter, scoreType, scoreMin, scoreMax, sortDir]);
 
+  // Everyone bulk-decline could actually touch, given whatever filters (job,
+  // category, score range) are currently narrowing `filtered` — so setting
+  // Score max to e.g. 49 first, then Select All, grabs exactly "everyone
+  // currently below 50%" without hand-checking each one individually.
+  const selectableIds = filtered.filter((s) => s.status === 'submitted' || s.status === 'interview_stage').map((s) => s.applicationId);
+
+  function handleSelectAll() {
+    setSelectedIds(new Set(selectableIds));
+  }
+
   // Decisions-tab-only view — ranked groups per job posting instead of one
   // flat table, so "who's the strongest candidate for *this* opening" is
   // the thing you see, not just a mixed list sorted by score across every
@@ -1262,11 +1294,20 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
 
         {scored && (
           <>
-            {isDecisionsTab && profile?.role === 'hr_personnel' && selectedIds.size > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: 'var(--pink-100)', borderRadius: 10, padding: '10px 16px' }}>
+            {isDecisionsTab && profile?.role === 'hr_personnel' && multiSelectMode && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: 'var(--pink-100)', borderRadius: 10, padding: '10px 16px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{selectedIds.size} selected</span>
-                <Button variant="ghost" size="sm" onClick={handleBulkDecline} disabled={bulkDeclining}>{bulkDeclining ? 'Declining…' : 'Decline Selected'}</Button>
-                <div onClick={() => setSelectedIds(new Set())} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)' }}>Clear</div>
+                {selectableIds.length > 0 && (
+                  <div onClick={handleSelectAll} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)', fontWeight: 700 }}>
+                    Select All ({selectableIds.length})
+                  </div>
+                )}
+                {selectedIds.size > 0 && (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={handleBulkDecline} disabled={bulkDeclining}>{bulkDeclining ? 'Declining…' : 'Decline Selected'}</Button>
+                    <div onClick={() => setSelectedIds(new Set())} style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 'var(--text-xs)' }}>Clear</div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1370,6 +1411,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                   compareSelected={compareIds.has(s.applicationId)}
                                   compareDisabled={compareIds.size >= 3}
                                   onToggleCompare={() => toggleCompare(s.applicationId)}
+                                  positionsFilled={positionsFilled}
                                 />
                               ))}
                             </div>
@@ -1460,9 +1502,9 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                 <div>{s.job?.title || '—'}</div>
                                 {s.job?.category && <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{s.job.category}</div>}
                               </td>
-                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'total' ? 700 : 400, color: scoreType === 'total' ? 'var(--action-primary-bg)' : undefined }}>{s.totalScore != null ? `${s.totalScore}%` : '—'}</td>
-                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'resume' ? 700 : 400 }}>{s.resumeScore != null ? `${s.resumeScore}%` : '—'}</td>
-                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'interview' ? 700 : 400 }}>{s.interviewScore != null ? `${s.interviewScore}%` : '—'}</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'total' ? 700 : 400, color: scoreColor(s.totalScore) }}>{s.totalScore != null ? `${s.totalScore}%` : '—'}</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'resume' ? 700 : 400, color: scoreColor(s.resumeScore) }}>{s.resumeScore != null ? `${s.resumeScore}%` : '—'}</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'interview' ? 700 : 400, color: scoreColor(s.interviewScore) }}>{s.interviewScore != null ? `${s.interviewScore}%` : '—'}</td>
                               <td style={{ padding: '12px' }}>
                                 <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: status.bg, color: status.fg, whiteSpace: 'nowrap' }}>{status.label}</span>
                               </td>
