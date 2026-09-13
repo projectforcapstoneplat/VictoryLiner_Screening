@@ -63,7 +63,19 @@ const SYSTEM_PROMPT =
   '(e.g. "followed all traffic regulations" satisfies a "Safe Driving" criterion, "CPR certified" satisfies "First ' +
   'Aid"), not just literal keyword matches. Weigh higher-weight criteria more heavily in the overall score. Be ' +
   "concrete in your reasoning — cite what the resume actually says, don't just restate the criterion. If the resume " +
-  'has no evidence for a criterion, say so plainly rather than guessing generously.';
+  'has no evidence for a criterion, say so plainly rather than guessing generously. The score must be driven ' +
+  'entirely by the weighted Screening Criteria listed below — general background facts (current location, highest ' +
+  'educational attainment, driving/work eligibility) are context only, not scoring criteria in themselves. Do not ' +
+  'award points for having a degree, living near the job\'s location, or holding a license/clearance unless a ' +
+  'specific listed criterion actually asks for that. When judging whether experience satisfies a listed criterion, ' +
+  'weigh how CENTRAL that skill actually was to the applicant\'s role, not merely whether something similar is ' +
+  'mentioned. A role where the skill was the core function (e.g. a retail cashier or call center agent, for a ' +
+  '"customer service experience" criterion) deserves strong credit even though the industry differs. A role where ' +
+  'a similar-sounding activity was only a minor, incidental part of a fundamentally different, specialized job ' +
+  '(e.g. a veterinary technician occasionally reassuring pet owners, an engineer occasionally emailing clients) ' +
+  'deserves meaningfully less credit for that same criterion — not zero, but say explicitly in your explanation ' +
+  'that it was incidental, not their core function, rather than treating brief exposure as full satisfaction of ' +
+  'the criterion.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -149,7 +161,13 @@ Deno.serve(async (req) => {
 
     const resumeText = buildResumeText(resume);
 
-    for (const job of unscored) {
+    // Scored concurrently, not one job at a time — each job is an
+    // independent Gemini call (a few seconds each), so a first-time resume
+    // save waiting on all of MAX_JOBS_PER_CALL sequentially could take well
+    // over a minute; in parallel it takes roughly as long as the single
+    // slowest call. Each iteration only ever touches its own job_id's row
+    // (via upsert), so there's no shared-state race between them.
+    await Promise.all(unscored.map(async (job) => {
       const { data: criteria } = await callerClient
         .from('criteria')
         .select('keyword, weight')
@@ -168,12 +186,12 @@ Deno.serve(async (req) => {
       });
       // Best-effort per job — one job's failure (quota, safety block, bad
       // response) shouldn't stop the rest of the batch from being scored.
-      if (!ok) continue;
+      if (!ok) return;
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) continue;
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return;
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) continue;
+      if (!text) return;
 
       try {
         const parsed = JSON.parse(text);
@@ -192,9 +210,8 @@ Deno.serve(async (req) => {
         );
       } catch {
         // Malformed JSON from the model — skip this job, next visit retries it.
-        continue;
       }
-    }
+    }));
 
     const { data: allMatches, error: allMatchesError } = await callerClient
       .from('resume_job_matches')

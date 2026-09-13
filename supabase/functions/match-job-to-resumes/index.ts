@@ -64,7 +64,19 @@ const SYSTEM_PROMPT =
   '(e.g. "followed all traffic regulations" satisfies a "Safe Driving" criterion, "CPR certified" satisfies "First ' +
   'Aid"), not just literal keyword matches. Weigh higher-weight criteria more heavily in the overall score. Be ' +
   "concrete in your reasoning — cite what the resume actually says, don't just restate the criterion. If the resume " +
-  'has no evidence for a criterion, say so plainly rather than guessing generously.';
+  'has no evidence for a criterion, say so plainly rather than guessing generously. The score must be driven ' +
+  'entirely by the weighted Screening Criteria listed below — general background facts (current location, highest ' +
+  'educational attainment, driving/work eligibility) are context only, not scoring criteria in themselves. Do not ' +
+  'award points for having a degree, living near the job\'s location, or holding a license/clearance unless a ' +
+  'specific listed criterion actually asks for that. When judging whether experience satisfies a listed criterion, ' +
+  'weigh how CENTRAL that skill actually was to the applicant\'s role, not merely whether something similar is ' +
+  'mentioned. A role where the skill was the core function (e.g. a retail cashier or call center agent, for a ' +
+  '"customer service experience" criterion) deserves strong credit even though the industry differs. A role where ' +
+  'a similar-sounding activity was only a minor, incidental part of a fundamentally different, specialized job ' +
+  '(e.g. a veterinary technician occasionally reassuring pet owners, an engineer occasionally emailing clients) ' +
+  'deserves meaningfully less credit for that same criterion — not zero, but say explicitly in your explanation ' +
+  'that it was incidental, not their core function, rather than treating brief exposure as full satisfaction of ' +
+  'the criterion.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -147,10 +159,15 @@ Deno.serve(async (req) => {
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
-    let scoredCount = 0;
-    let notifiedCount = 0;
 
-    for (const resume of unscored) {
+    // Scored concurrently, not one applicant at a time — each is an
+    // independent Gemini call (a few seconds each), so publishing a job
+    // against a real applicant pool waiting on them sequentially could take
+    // minutes; in parallel it takes roughly as long as the single slowest
+    // call. Each iteration returns its own outcome rather than mutating a
+    // shared counter directly, then those get summed once every call has
+    // settled — avoids any doubt about concurrent increments.
+    const results = await Promise.all(unscored.map(async (resume) => {
       const resumeText = buildResumeText(resume);
       const userPrompt = buildPrompt(job, criteria ?? [], resumeText, resume);
 
@@ -159,12 +176,12 @@ Deno.serve(async (req) => {
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         generationConfig: { responseMimeType: 'application/json', responseSchema: EVALUATION_SCHEMA },
       });
-      if (!ok) continue;
+      if (!ok) return { scored: false, notified: false };
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) continue;
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return { scored: false, notified: false };
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) continue;
+      if (!text) return { scored: false, notified: false };
 
       try {
         const parsed = JSON.parse(text);
@@ -181,7 +198,6 @@ Deno.serve(async (req) => {
           },
           { onConflict: 'applicant_id,job_id' },
         );
-        scoredCount += 1;
 
         if (score >= effectiveMinPercent) {
           // In-website notification — same trigger point as the email
@@ -195,15 +211,20 @@ Deno.serve(async (req) => {
             body: "We compared your resume against this role and it's a strong fit. Take a look and apply if you're interested.",
           });
 
+          let notified = false;
           if (resume.email) {
-            const sent = await sendMatchEmail(resume.email, resume.full_name, job.title, siteUrl);
-            if (sent) notifiedCount += 1;
+            notified = await sendMatchEmail(resume.email, resume.full_name, job.title, siteUrl);
           }
+          return { scored: true, notified };
         }
+        return { scored: true, notified: false };
       } catch {
-        continue;
+        return { scored: false, notified: false };
       }
-    }
+    }));
+
+    const scoredCount = results.filter((r) => r.scored).length;
+    const notifiedCount = results.filter((r) => r.notified).length;
 
     return json({ scored: scoredCount, notified: notifiedCount, remaining: (resumes ?? []).length - alreadyScored.size - unscored.length });
   } catch (err) {

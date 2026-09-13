@@ -51,7 +51,18 @@ const SYSTEM_PROMPT =
   '"CPR certified" satisfies "First Aid"), not just literal keyword matches. Weigh higher-weight criteria more ' +
   'heavily in the overall score. Be concrete and specific in your reasoning — cite what the applicant actually ' +
   'wrote, don\'t just restate the criterion. If the applicant has no evidence for a criterion, say so plainly ' +
-  'rather than guessing generously.';
+  'rather than guessing generously. The score must be driven entirely by the weighted Screening Criteria listed ' +
+  'below — general background facts (current location, highest educational attainment, driving/work eligibility) ' +
+  'are context only, not scoring criteria in themselves. Do not award points for having a degree, living near the ' +
+  'job\'s location, or holding a license/clearance unless a specific listed criterion actually asks for that. When ' +
+  'judging whether experience satisfies a listed criterion, weigh how CENTRAL that skill actually was to the ' +
+  'applicant\'s role, not merely whether something similar is mentioned. A role where the skill was the core ' +
+  'function (e.g. a retail cashier or call center agent, for a "customer service experience" criterion) deserves ' +
+  'strong credit even though the industry differs. A role where a similar-sounding activity was only a minor, ' +
+  'incidental part of a fundamentally different, specialized job (e.g. a veterinary technician occasionally ' +
+  'reassuring pet owners, an engineer occasionally emailing clients) deserves meaningfully less credit for that ' +
+  'same criterion — not zero, but say explicitly in your explanation that it was incidental, not their core ' +
+  'function, rather than treating brief exposure as full satisfaction of the criterion.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
