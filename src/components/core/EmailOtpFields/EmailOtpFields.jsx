@@ -8,7 +8,7 @@
 // Errors and the final verified session are reported up via callbacks
 // rather than rendered here, so each page can show them through its own
 // existing FormError/error state instead of a second, separate one.
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '../Button/Button.jsx';
 import { FloatingInput } from '../FloatingInput/FloatingInput.jsx';
 import { sendSignInOtp, verifySignInOtp } from '../../../lib/auth.js';
@@ -16,11 +16,35 @@ import { friendlyAuthError } from '../../../lib/authErrors.js';
 
 const LINK_BUTTON_STYLE = { background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--action-primary-bg)', padding: 4 };
 
+// Supabase itself rate-limits OTP sends per address, so without a
+// client-side cooldown, an impatient user hammering "Resend Code" would
+// just get back confusing rate-limit errors instead of a clear "please
+// wait." 30s comfortably covers real email delivery lag too.
+const RESEND_COOLDOWN_SECONDS = 30;
+
 export function EmailOtpFields({ email, idPrefix = 'otp', onVerified, onError }) {
   const [step, setStep] = useState('email');
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const cooldownRef = useRef(null);
+
+  useEffect(() => () => clearInterval(cooldownRef.current), []);
+
+  const startCooldown = () => {
+    setCooldown(RESEND_COOLDOWN_SECONDS);
+    clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setCooldown((s) => {
+        if (s <= 1) {
+          clearInterval(cooldownRef.current);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
 
   const handleSendCode = async () => {
     onError('');
@@ -37,6 +61,7 @@ export function EmailOtpFields({ email, idPrefix = 'otp', onVerified, onError })
     }
     setCode('');
     setStep('code');
+    startCooldown();
   };
 
   const handleVerify = async () => {
@@ -81,8 +106,8 @@ export function EmailOtpFields({ email, idPrefix = 'otp', onVerified, onError })
           Change Email
         </button>
         <span style={{ opacity: 0.4, alignSelf: 'center' }}>·</span>
-        <button onClick={handleSendCode} disabled={sending} style={LINK_BUTTON_STYLE}>
-          {sending ? 'Resending…' : 'Resend Code'}
+        <button onClick={handleSendCode} disabled={sending || cooldown > 0} style={{ ...LINK_BUTTON_STYLE, opacity: cooldown > 0 ? 0.5 : 1 }}>
+          {sending ? 'Resending…' : cooldown > 0 ? `Resend Code (${cooldown}s)` : 'Resend Code'}
         </button>
       </div>
     </div>
