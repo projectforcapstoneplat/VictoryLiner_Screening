@@ -151,10 +151,15 @@ Deno.serve(async (req) => {
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
-    let scoredCount = 0;
-    let notifiedCount = 0;
 
-    for (const resume of unscored) {
+    // Scored concurrently, not one applicant at a time — each is an
+    // independent Gemini call (a few seconds each), so publishing a job
+    // against a real applicant pool waiting on them sequentially could take
+    // minutes; in parallel it takes roughly as long as the single slowest
+    // call. Each iteration returns its own outcome rather than mutating a
+    // shared counter directly, then those get summed once every call has
+    // settled — avoids any doubt about concurrent increments.
+    const results = await Promise.all(unscored.map(async (resume) => {
       const resumeText = buildResumeText(resume);
       const userPrompt = buildPrompt(job, criteria ?? [], resumeText, resume);
 
@@ -163,12 +168,12 @@ Deno.serve(async (req) => {
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         generationConfig: { responseMimeType: 'application/json', responseSchema: EVALUATION_SCHEMA },
       });
-      if (!ok) continue;
+      if (!ok) return { scored: false, notified: false };
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) continue;
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return { scored: false, notified: false };
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) continue;
+      if (!text) return { scored: false, notified: false };
 
       try {
         const parsed = JSON.parse(text);
@@ -185,7 +190,6 @@ Deno.serve(async (req) => {
           },
           { onConflict: 'applicant_id,job_id' },
         );
-        scoredCount += 1;
 
         if (score >= effectiveMinPercent) {
           // In-website notification — same trigger point as the email
@@ -199,15 +203,20 @@ Deno.serve(async (req) => {
             body: "We compared your resume against this role and it's a strong fit. Take a look and apply if you're interested.",
           });
 
+          let notified = false;
           if (resume.email) {
-            const sent = await sendMatchEmail(resume.email, resume.full_name, job.title, siteUrl);
-            if (sent) notifiedCount += 1;
+            notified = await sendMatchEmail(resume.email, resume.full_name, job.title, siteUrl);
           }
+          return { scored: true, notified };
         }
+        return { scored: true, notified: false };
       } catch {
-        continue;
+        return { scored: false, notified: false };
       }
-    }
+    }));
+
+    const scoredCount = results.filter((r) => r.scored).length;
+    const notifiedCount = results.filter((r) => r.notified).length;
 
     return json({ scored: scoredCount, notified: notifiedCount, remaining: (resumes ?? []).length - alreadyScored.size - unscored.length });
   } catch (err) {

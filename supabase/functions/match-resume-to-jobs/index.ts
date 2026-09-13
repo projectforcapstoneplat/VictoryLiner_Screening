@@ -153,7 +153,13 @@ Deno.serve(async (req) => {
 
     const resumeText = buildResumeText(resume);
 
-    for (const job of unscored) {
+    // Scored concurrently, not one job at a time — each job is an
+    // independent Gemini call (a few seconds each), so a first-time resume
+    // save waiting on all of MAX_JOBS_PER_CALL sequentially could take well
+    // over a minute; in parallel it takes roughly as long as the single
+    // slowest call. Each iteration only ever touches its own job_id's row
+    // (via upsert), so there's no shared-state race between them.
+    await Promise.all(unscored.map(async (job) => {
       const { data: criteria } = await callerClient
         .from('criteria')
         .select('keyword, weight')
@@ -172,12 +178,12 @@ Deno.serve(async (req) => {
       });
       // Best-effort per job — one job's failure (quota, safety block, bad
       // response) shouldn't stop the rest of the batch from being scored.
-      if (!ok) continue;
+      if (!ok) return;
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) continue;
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return;
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) continue;
+      if (!text) return;
 
       try {
         const parsed = JSON.parse(text);
@@ -196,9 +202,8 @@ Deno.serve(async (req) => {
         );
       } catch {
         // Malformed JSON from the model — skip this job, next visit retries it.
-        continue;
       }
-    }
+    }));
 
     const { data: allMatches, error: allMatchesError } = await callerClient
       .from('resume_job_matches')
