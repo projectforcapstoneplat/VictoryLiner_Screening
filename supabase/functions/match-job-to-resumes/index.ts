@@ -18,6 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
+import { sendEmail } from '../_shared/mailer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
@@ -144,8 +145,6 @@ Deno.serve(async (req) => {
     const alreadyScored = new Set((existing ?? []).map((m) => m.applicant_id));
     const unscored = (resumes ?? []).filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
 
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
     let scoredCount = 0;
@@ -188,7 +187,7 @@ Deno.serve(async (req) => {
           // In-website notification — same trigger point as the email
           // below, so an applicant sees "a job matches you" on their next
           // visit even if the email never arrives (spam filter, mistyped
-          // address, RESEND_API_KEY not configured yet, etc.).
+          // address, Gmail SMTP not configured yet, etc.).
           await adminClient.from('applicant_notifications').insert({
             applicant_id: resume.applicant_id,
             job_id: jobId,
@@ -196,8 +195,8 @@ Deno.serve(async (req) => {
             body: "We compared your resume against this role and it's a strong fit. Take a look and apply if you're interested.",
           });
 
-          if (resendKey && resume.email) {
-            const sent = await sendMatchEmail(resendKey, fromEmail, resume.email, resume.full_name, job.title, siteUrl);
+          if (resume.email) {
+            const sent = await sendMatchEmail(resume.email, resume.full_name, job.title, siteUrl);
             if (sent) notifiedCount += 1;
           }
         }
@@ -213,8 +212,6 @@ Deno.serve(async (req) => {
 });
 
 async function sendMatchEmail(
-  resendKey: string,
-  fromEmail: string,
   toEmail: string,
   fullName: string | null,
   jobTitle: string,
@@ -225,30 +222,21 @@ async function sendMatchEmail(
   // instruction. Falls back to plain text when ALLOWED_ORIGIN isn't set
   // (local/testing) — there's no real domain to link to in that case.
   const link = siteUrl ? `${siteUrl}/?screen=matches` : null;
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: toEmail,
-        subject: `A new opening matches you — ${jobTitle}`,
-        html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-          <p>Hi ${fullName || 'there'},</p>
-          <p>A new opening just went live that matches your resume: <strong>${jobTitle}</strong>.</p>
-          <p>${
-            link
-              ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to view it and apply</a>.`
-              : 'Sign in to Victory Liner Careers to view it and apply.'
-          }</p>
-          <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
-        </div>`,
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await sendEmail({
+    to: toEmail,
+    subject: `A new opening matches you — ${jobTitle}`,
+    html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
+      <p>Hi ${fullName || 'there'},</p>
+      <p>A new opening just went live that matches your resume: <strong>${jobTitle}</strong>.</p>
+      <p>${
+        link
+          ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to view it and apply</a>.`
+          : 'Sign in to Victory Liner Careers to view it and apply.'
+      }</p>
+      <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+    </div>`,
+  });
+  return result.ok;
 }
 
 // deno-lint-ignore no-explicit-any

@@ -8,6 +8,7 @@
 // — best-effort, a failed send here never blocks the applicant from seeing
 // their own "You're All Done!" screen.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { sendEmail } from '../_shared/mailer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
@@ -23,8 +24,6 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
@@ -72,34 +71,26 @@ Deno.serve(async (req) => {
       .eq('is_active', true);
     const hrEmails = (hrProfiles || []).map((p) => p.email).filter(Boolean);
 
-    if (!resendKey) {
-      return json({ sent: false, error: 'Email is not configured yet (missing RESEND_API_KEY secret).' }, 501);
-    }
     if (hrEmails.length === 0) {
       return json({ sent: false, error: 'No active HR accounts to notify.' }, 200);
     }
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: hrEmails,
-        subject: `Video interview ready to review — ${application.full_name || 'an applicant'} (${jobTitle})`,
-        html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-          <p><strong>${application.full_name || 'An applicant'}</strong> just finished their video interview for <strong>${jobTitle}</strong> — every question is answered and ready for your review.</p>
-          ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">Review it on the Decisions tab</a></p>` : ''}
-          <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers — HR Command Center</p>
-        </div>`,
-      }),
-    });
+    // Sent individually per HR account, in parallel, rather than one SMTP
+    // call with every address crammed into a single "to" field.
+    const subject = `Video interview ready to review — ${application.full_name || 'an applicant'} (${jobTitle})`;
+    const html = `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
+      <p><strong>${application.full_name || 'An applicant'}</strong> just finished their video interview for <strong>${jobTitle}</strong> — every question is answered and ready for your review.</p>
+      ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">Review it on the Decisions tab</a></p>` : ''}
+      <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers — HR Command Center</p>
+    </div>`;
+    const results = await Promise.all(hrEmails.map((to: string) => sendEmail({ to, subject, html })));
+    const sentCount = results.filter((r) => r.ok).length;
 
-    if (!resendRes.ok) {
-      const errBody = await resendRes.json().catch(() => ({}));
-      return json({ sent: false, error: errBody.message || 'Failed to send email.' }, 502);
+    if (sentCount === 0) {
+      return json({ sent: false, error: results[0]?.error || 'Failed to send email.' }, results[0]?.status || 502);
     }
 
-    return json({ sent: true, notifiedCount: hrEmails.length });
+    return json({ sent: true, notifiedCount: sentCount, totalHr: hrEmails.length });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }

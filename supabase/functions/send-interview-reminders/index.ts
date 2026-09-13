@@ -8,6 +8,7 @@
 // than a user JWT — only Supabase's own cron job (or someone who already has
 // that secret) can invoke it.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { sendEmail } from '../_shared/mailer.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEADLINE_DAYS = 3;
@@ -27,12 +28,6 @@ Deno.serve(async (req) => {
 
     if (authHeader !== `Bearer ${serviceRoleKey}`) {
       return json({ error: 'Not authorized.' }, 401);
-    }
-
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
-    if (!resendKey) {
-      return json({ error: 'Email is not configured yet (missing RESEND_API_KEY secret).' }, 501);
     }
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
@@ -78,7 +73,7 @@ Deno.serve(async (req) => {
       if (!app.email) continue;
 
       const jobTitle = app.job_postings?.title || 'the role you applied for';
-      const sent = await sendReminderEmail(resendKey, fromEmail, app.email, app.full_name, jobTitle, link);
+      const sent = await sendReminderEmail(app.email, app.full_name, jobTitle, link);
       if (sent) {
         remindedCount += 1;
         await adminClient.from('applications').update({ interview_deadline_reminder_sent_at: new Date().toISOString() }).eq('id', app.id);
@@ -92,34 +87,23 @@ Deno.serve(async (req) => {
 });
 
 async function sendReminderEmail(
-  resendKey: string,
-  fromEmail: string,
   toEmail: string,
   fullName: string | null,
   jobTitle: string,
   link: string | null,
 ): Promise<boolean> {
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: toEmail,
-        subject: `1 day left to complete your video interview — ${jobTitle}`,
-        html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-          <p>Hi ${fullName || 'there'},</p>
-          <p>You have about <strong>1 day left</strong> to finish your video interview for <strong>${jobTitle}</strong> — it unlocks
-          ${DEADLINE_DAYS} days from when your resume cleared screening, and that window is almost up.</p>
-          <p>${link ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to finish your interview</a>` : 'Sign in to Victory Liner Careers to finish your interview'} before it closes.</p>
-          <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
-        </div>`,
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await sendEmail({
+    to: toEmail,
+    subject: `1 day left to complete your video interview — ${jobTitle}`,
+    html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
+      <p>Hi ${fullName || 'there'},</p>
+      <p>You have about <strong>1 day left</strong> to finish your video interview for <strong>${jobTitle}</strong> — it unlocks
+      ${DEADLINE_DAYS} days from when your resume cleared screening, and that window is almost up.</p>
+      <p>${link ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to finish your interview</a>` : 'Sign in to Victory Liner Careers to finish your interview'} before it closes.</p>
+      <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+    </div>`,
+  });
+  return result.ok;
 }
 
 function json(body: unknown, status = 200) {

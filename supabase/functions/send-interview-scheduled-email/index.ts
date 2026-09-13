@@ -7,6 +7,7 @@
 // scheduleInterview (src/lib/applications.js) — best-effort, a failed send
 // here never undoes the schedule that was just saved.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { sendEmail } from '../_shared/mailer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
@@ -22,8 +23,6 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
@@ -72,8 +71,8 @@ Deno.serve(async (req) => {
 
     // In-website notification first — same trigger point as the email
     // below, so the applicant sees this on their next visit even if the
-    // email never arrives (spam filter, mistyped address, RESEND_API_KEY
-    // not configured yet, etc.). Uses the service-role client since
+    // email never arrives (spam filter, mistyped address, Gmail SMTP not
+    // configured yet, etc.). Uses the service-role client since
     // applicant_notifications has no applicant-facing insert policy.
     let notified = false;
     if (application.applicant_id) {
@@ -86,37 +85,27 @@ Deno.serve(async (req) => {
       notified = !notifyError;
     }
 
-    if (!resendKey) {
-      return json({ notified, sent: false, error: 'Email is not configured yet (missing RESEND_API_KEY secret).' }, notified ? 200 : 501);
-    }
-
     const detailRows = [
       `<tr><td style="padding:4px 12px 4px 0;color:#888;">When</td><td style="padding:4px 0;font-weight:700;">${formattedWhen}</td></tr>`,
       location ? `<tr><td style="padding:4px 12px 4px 0;color:#888;">Where</td><td style="padding:4px 0;">${location}</td></tr>` : '',
       notes ? `<tr><td style="padding:4px 12px 4px 0;color:#888;vertical-align:top;">Notes</td><td style="padding:4px 0;">${notes}</td></tr>` : '',
     ].filter(Boolean).join('');
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: application.email,
-        subject: `Your personal interview is scheduled — ${jobTitle}`,
-        html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-          <p>Hi ${application.full_name || 'there'},</p>
-          <p>Congratulations — HR has scheduled your personal interview for <strong>${jobTitle}</strong>.</p>
-          <table style="margin:16px 0;border-collapse:collapse;">${detailRows}</table>
-          <p>Please arrive on time and bring any documents HR may have requested.</p>
-          ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">View your application</a></p>` : ''}
-          <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
-        </div>`,
-      }),
+    const result = await sendEmail({
+      to: application.email,
+      subject: `Your personal interview is scheduled — ${jobTitle}`,
+      html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
+        <p>Hi ${application.full_name || 'there'},</p>
+        <p>Congratulations — HR has scheduled your personal interview for <strong>${jobTitle}</strong>.</p>
+        <table style="margin:16px 0;border-collapse:collapse;">${detailRows}</table>
+        <p>Please arrive on time and bring any documents HR may have requested.</p>
+        ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">View your application</a></p>` : ''}
+        <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+      </div>`,
     });
 
-    if (!resendRes.ok) {
-      const errBody = await resendRes.json().catch(() => ({}));
-      return json({ notified, sent: false, error: errBody.message || 'Failed to send email.' }, 502);
+    if (!result.ok) {
+      return json({ notified, sent: false, error: result.error || 'Failed to send email.' }, notified ? 200 : (result.status || 502));
     }
 
     return json({ notified, sent: true });
