@@ -27,33 +27,49 @@ const GEMINI_MODEL = 'gemini-3.6-flash';
 // Any jobs left over just get picked up on the applicant's next visit.
 const MAX_JOBS_PER_CALL = 15;
 
+// Jobs are scored in batches of this size per Gemini call instead of one
+// call per job — same per-job AI judgment, just fewer round trips, since
+// Gemini's free-tier quota is metered per-request (RPD), not per-job-scored.
+const BATCH_SIZE = 5;
+
 // Mirrors evaluate-application's schema exactly (score + explanation +
 // per-criterion breakdown) — this evaluation is meant to be a full,
 // HR-quality substitute for that one, not a lighter preview. When an
 // applicant quick-applies to a matched job (see quick-apply/index.ts),
 // this row gets copied into resume_evaluations as-is instead of paying for
 // a second AI call on the exact same resume/job pair.
-const EVALUATION_SCHEMA = {
+const BATCH_EVALUATION_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    score: { type: 'INTEGER', description: 'Overall match score from 0 (no fit) to 100 (excellent fit), weighted toward higher-weight criteria.' },
-    explanation: { type: 'STRING', description: '2-4 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
-    criteriaAssessment: {
+    results: {
       type: 'ARRAY',
-      description: 'One entry per screening criterion provided.',
+      description: 'Exactly one entry per job provided below, matched back by jobIndex — order does not matter.',
       items: {
         type: 'OBJECT',
         properties: {
-          keyword: { type: 'STRING' },
-          weight: { type: 'INTEGER' },
-          matched: { type: 'BOOLEAN', description: 'True if the resume demonstrates this, even via different wording (e.g. "obeys traffic laws" satisfies "Safe Driving").' },
-          reasoning: { type: 'STRING', description: 'One short sentence citing what in the resume supports or fails this criterion.' },
+          jobIndex: { type: 'INTEGER', description: 'The Job N number (from "=== Job N ===") this result is for.' },
+          score: { type: 'INTEGER', description: 'Overall match score from 0 (no fit) to 100 (excellent fit), weighted toward higher-weight criteria.' },
+          explanation: { type: 'STRING', description: '2-4 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
+          criteriaAssessment: {
+            type: 'ARRAY',
+            description: "One entry per that job's own screening criteria — never mix in another job's criteria.",
+            items: {
+              type: 'OBJECT',
+              properties: {
+                keyword: { type: 'STRING' },
+                weight: { type: 'INTEGER' },
+                matched: { type: 'BOOLEAN', description: 'True if the resume demonstrates this, even via different wording (e.g. "obeys traffic laws" satisfies "Safe Driving").' },
+                reasoning: { type: 'STRING', description: 'One short sentence citing what in the resume supports or fails this criterion.' },
+              },
+              required: ['keyword', 'weight', 'matched', 'reasoning'],
+            },
+          },
         },
-        required: ['keyword', 'weight', 'matched', 'reasoning'],
+        required: ['jobIndex', 'score', 'explanation', 'criteriaAssessment'],
       },
     },
   },
-  required: ['score', 'explanation', 'criteriaAssessment'],
+  required: ['results'],
 };
 
 const SYSTEM_PROMPT =
@@ -75,7 +91,9 @@ const SYSTEM_PROMPT =
   '(e.g. a veterinary technician occasionally reassuring pet owners, an engineer occasionally emailing clients) ' +
   'deserves meaningfully less credit for that same criterion — not zero, but say explicitly in your explanation ' +
   'that it was incidental, not their core function, rather than treating brief exposure as full satisfaction of ' +
-  'the criterion.';
+  'the criterion. You may be given several open jobs to evaluate this same resume against in one request — treat ' +
+  'each job as fully separate: judge it only against its own listed criteria and description, never let one job\'s ' +
+  'criteria or context bleed into another\'s assessment.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -160,57 +178,97 @@ Deno.serve(async (req) => {
     const unscored = (jobs ?? []).filter((j) => !scoredJobIds.has(j.id)).slice(0, MAX_JOBS_PER_CALL);
 
     const resumeText = buildResumeText(resume);
+    const resumeContext = buildResumeContext(resumeText, resume);
 
-    // Scored concurrently, not one job at a time — each job is an
-    // independent Gemini call (a few seconds each), so a first-time resume
-    // save waiting on all of MAX_JOBS_PER_CALL sequentially could take well
-    // over a minute; in parallel it takes roughly as long as the single
-    // slowest call. Each iteration only ever touches its own job_id's row
-    // (via upsert), so there's no shared-state race between them.
-    await Promise.all(unscored.map(async (job) => {
-      const { data: criteria } = await callerClient
+    // One query for every unscored job's criteria instead of one query per
+    // job — also switches this off callerClient: criteria is HR-select-only
+    // by RLS (criteria_select_hr in 0004_criteria.sql), so the previous
+    // per-job callerClient.from('criteria') read silently came back empty
+    // for every applicant caller, meaning every "Jobs That Match You" score
+    // was ever only computed from the job description/qualifications text,
+    // never the actual weighted screening criteria HR configured. adminClient
+    // is already used for the resume_job_matches writes below, same
+    // reasoning applies to this read.
+    const criteriaByJob = new Map<string, { keyword: string; weight: number }[]>();
+    if (unscored.length) {
+      const { data: allCriteria } = await adminClient
         .from('criteria')
-        .select('keyword, weight')
-        .eq('job_id', job.id)
+        .select('job_id, keyword, weight')
+        .in('job_id', unscored.map((j) => j.id))
         .order('weight', { ascending: false });
+      for (const c of allCriteria ?? []) {
+        if (!criteriaByJob.has(c.job_id)) criteriaByJob.set(c.job_id, []);
+        criteriaByJob.get(c.job_id)!.push({ keyword: c.keyword, weight: c.weight });
+      }
+    }
 
-      const userPrompt = buildPrompt(job, criteria ?? [], resumeText, resume);
+    const batches: (typeof unscored)[] = [];
+    for (let i = 0; i < unscored.length; i += BATCH_SIZE) batches.push(unscored.slice(i, i + BATCH_SIZE));
+
+    // Batches run concurrently, not one at a time — each is an independent
+    // Gemini call (a few seconds each), so a first-time resume save waiting
+    // on all of MAX_JOBS_PER_CALL sequentially could take well over a
+    // minute; in parallel it takes roughly as long as the single slowest
+    // call. Each batch only ever touches its own jobs' rows (via upsert),
+    // so there's no shared-state race between them.
+    await Promise.all(batches.map(async (batch) => {
+      const userPrompt = buildBatchPrompt(resumeContext, batch, criteriaByJob);
 
       const { ok, body: geminiBody } = await callGemini(GEMINI_MODEL, {
         contents: [{ parts: [{ text: userPrompt }] }],
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         generationConfig: {
           responseMimeType: 'application/json',
-          responseSchema: EVALUATION_SCHEMA,
+          responseSchema: BATCH_EVALUATION_SCHEMA,
         },
       });
-      // Best-effort per job — one job's failure (quota, safety block, bad
-      // response) shouldn't stop the rest of the batch from being scored.
-      if (!ok) return;
+      // Best-effort per batch — one batch's failure (quota, safety block,
+      // bad response) shouldn't stop the rest of the jobs from being scored.
+      if (!ok) {
+        console.error(`[match-resume-to-jobs] Gemini batch call failed (size=${batch.length})`, JSON.stringify(geminiBody));
+        return;
+      }
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return;
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) {
+        console.error(`[match-resume-to-jobs] bad finishReason=${candidate.finishReason} for batch (size=${batch.length})`);
+        return;
+      }
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) return;
+      if (!text) {
+        console.error(`[match-resume-to-jobs] empty text for batch (size=${batch.length})`, JSON.stringify(geminiBody));
+        return;
+      }
 
+      // deno-lint-ignore no-explicit-any
+      let parsedResults: any[];
       try {
-        const parsed = JSON.parse(text);
-        const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0)));
+        parsedResults = JSON.parse(text)?.results ?? [];
+      } catch (err) {
+        console.error(`[match-resume-to-jobs] batch parse failed (size=${batch.length})`, err instanceof Error ? err.message : err, text);
+        return;
+      }
+
+      await Promise.all(batch.map(async (job, i) => {
+        const entry = parsedResults.find((r) => r.jobIndex === i + 1);
+        if (!entry) {
+          console.error(`[match-resume-to-jobs] no result for jobIndex=${i + 1} (job=${job.id})`);
+          return;
+        }
+        const score = Math.max(0, Math.min(100, Math.round(Number(entry.score) || 0)));
         await adminClient.from('resume_job_matches').upsert(
           {
             applicant_id: user.id,
             job_id: job.id,
             score,
-            explanation: parsed.explanation ?? '',
-            criteria_assessment: parsed.criteriaAssessment ?? [],
+            explanation: entry.explanation ?? '',
+            criteria_assessment: entry.criteriaAssessment ?? [],
             model: GEMINI_MODEL,
             matched_at: new Date().toISOString(),
           },
           { onConflict: 'applicant_id,job_id' },
         );
-      } catch {
-        // Malformed JSON from the model — skip this job, next visit retries it.
-      }
+      }));
     }));
 
     const { data: allMatches, error: allMatchesError } = await callerClient
@@ -269,11 +327,7 @@ function computeYearsOfExperience(workExperience: any[]): number | null {
 }
 
 // deno-lint-ignore no-explicit-any
-function buildPrompt(job: any, criteria: any[], resumeText: string, resume: any): string {
-  const criteriaText = criteria.length
-    ? criteria.map((c) => `- ${c.keyword} (weight ${c.weight}/5)`).join('\n')
-    : '(No specific criteria defined — evaluate general fit against the job description and qualifications below.)';
-
+function buildResumeContext(resumeText: string, resume: any): string {
   const totalYears = computeYearsOfExperience(resume.work_experience);
 
   const eligibilityFacts: string[] = [];
@@ -303,19 +357,39 @@ function buildPrompt(job: any, criteria: any[], resumeText: string, resume: any)
   }
 
   return [
+    'Applicant\'s Resume (the SAME resume applies to every job listed below):',
+    totalYears != null ? `Total Years of Work Experience (already computed from the dates below — use this number as-is, don't recompute): ${totalYears}` : null,
+    eligibilityFacts.length ? `Driving & Work Eligibility:\n${eligibilityFacts.join('\n')}` : null,
+    `Resume Information:\n${resumeText || '(No skills, experience, education, or certifications provided.)'}`,
+    resume.summary ? `Professional Summary:\n${resume.summary}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+// deno-lint-ignore no-explicit-any
+function buildJobBlock(job: any, criteria: { keyword: string; weight: number }[], index: number): string {
+  const criteriaText = criteria.length
+    ? criteria.map((c) => `- ${c.keyword} (weight ${c.weight}/5)`).join('\n')
+    : '(No specific criteria defined — evaluate general fit against the job description and qualifications below.)';
+
+  return [
+    `\n=== Job ${index} (jobIndex: ${index}) ===`,
     `Job Title: ${job.title}`,
     job.location ? `Job Location: ${job.location}` : null,
     job.description ? `Description: ${job.description}` : null,
     job.required_qualifications ? `Required Qualifications: ${job.required_qualifications}` : null,
     job.preferred_qualifications ? `Preferred Qualifications: ${job.preferred_qualifications}` : null,
-    `\nScreening Criteria:\n${criteriaText}`,
-    totalYears != null ? `\nTotal Years of Work Experience (already computed from the dates below — use this number as-is, don't recompute): ${totalYears}` : null,
-    eligibilityFacts.length ? `\nDriving & Work Eligibility:\n${eligibilityFacts.join('\n')}` : null,
-    `\nApplicant's Resume Information:\n${resumeText || '(No skills, experience, education, or certifications provided.)'}`,
-    resume.summary ? `\nApplicant's Professional Summary:\n${resume.summary}` : null,
+    `Screening Criteria:\n${criteriaText}`,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// deno-lint-ignore no-explicit-any
+function buildBatchPrompt(resumeContext: string, batch: any[], criteriaByJob: Map<string, { keyword: string; weight: number }[]>): string {
+  const jobBlocks = batch.map((job, i) => buildJobBlock(job, criteriaByJob.get(job.id) ?? [], i + 1)).join('\n');
+  return `${resumeContext}\n\nEvaluate the resume above against each of the following ${batch.length} job(s) — each job is independent, judge it only against its own criteria and description. Return one result per job in the "results" array, each tagged with the jobIndex shown in its "=== Job N ===" header so it can be matched back.\n${jobBlocks}`;
 }
 
 function json(body: unknown, status = 200) {
