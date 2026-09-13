@@ -159,6 +159,23 @@ Deno.serve(async (req) => {
       return json({ error: 'Please finish building your resume first.' }, 400);
     }
 
+    // Once HR has scheduled a personal interview off any of this applicant's
+    // applications, they're already deep in an active hiring process — new
+    // job matching stops making sense for them (they're not job-hunting
+    // anymore) and would just spend AI quota nobody's going to act on.
+    // applications' own RLS already restricts this select to the caller's
+    // own rows, so callerClient is fine here, no service-role needed.
+    const { data: scheduledApp } = await callerClient
+      .from('applications')
+      .select('id')
+      .eq('applicant_id', user.id)
+      .not('scheduled_interview_at', 'is', null)
+      .limit(1)
+      .maybeSingle();
+    if (scheduledApp) {
+      return json({ error: "You already have a scheduled interview — job matching is on hold while that moves forward." }, 403);
+    }
+
     const { data: jobs, error: jobsError } = await callerClient
       .from('job_postings')
       .select('*')

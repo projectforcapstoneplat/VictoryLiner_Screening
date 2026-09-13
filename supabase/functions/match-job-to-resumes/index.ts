@@ -171,13 +171,27 @@ Deno.serve(async (req) => {
       return json({ error: resumesError.message }, 500);
     }
 
+    // Anyone HR has already scheduled a personal interview for (on any of
+    // their applications) is deep in an active hiring process already —
+    // scoring them against a freshly published, unrelated job and emailing
+    // them "a new opening matches you" would just be noise, and spends AI
+    // quota nobody's going to act on. Excluded before the alreadyScored
+    // check runs, not just skipped at notify time, so they never even get a
+    // resume_job_matches row written for a job they're not going to see.
+    const { data: scheduledApps } = await adminClient
+      .from('applications')
+      .select('applicant_id')
+      .not('scheduled_interview_at', 'is', null);
+    const scheduledApplicantIds = new Set((scheduledApps ?? []).map((a) => a.applicant_id));
+    const eligibleResumes = (resumes ?? []).filter((r) => !scheduledApplicantIds.has(r.applicant_id));
+
     const { data: existing } = await adminClient
       .from('resume_job_matches')
       .select('applicant_id')
       .eq('job_id', jobId);
     const alreadyScored = new Set((existing ?? []).map((m) => m.applicant_id));
-    const unscored = (resumes ?? []).filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
-    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
+    const unscored = eligibleResumes.filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
+    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedScheduled=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
@@ -272,7 +286,7 @@ Deno.serve(async (req) => {
     const scoredCount = results.filter((r) => r.scored).length;
     const notifiedCount = results.filter((r) => r.notified).length;
 
-    return json({ scored: scoredCount, notified: notifiedCount, remaining: (resumes ?? []).length - alreadyScored.size - unscored.length });
+    return json({ scored: scoredCount, notified: notifiedCount, remaining: eligibleResumes.length - alreadyScored.size - unscored.length });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
