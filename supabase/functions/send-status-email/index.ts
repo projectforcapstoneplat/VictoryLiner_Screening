@@ -7,14 +7,12 @@
 // already happened, it just means the applicant finds out next time they
 // check the site instead of by email.
 //
-// Uses Resend's REST API directly rather than Supabase's built-in email —
-// that's auth-flow-only (signup confirmation, password reset) and has no
-// API for sending arbitrary custom-content notifications like this one.
-// Requires the RESEND_API_KEY secret (supabase secrets set RESEND_API_KEY=...).
-// RESEND_FROM_EMAIL defaults to Resend's shared test address, which only
-// delivers reliably to your own verified account — swap in a real address
-// on your own verified domain once you have one (see supabase/README.md).
+// Sends over real Gmail SMTP rather than Supabase's built-in email — that's
+// auth-flow-only (signup confirmation, password reset) and has no API for
+// sending arbitrary custom-content notifications like this one. See
+// supabase/functions/_shared/mailer.ts for the required secrets.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { sendEmail } from '../_shared/mailer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
@@ -63,12 +61,6 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Victory Liner Careers <onboarding@resend.dev>';
-
-    if (!resendKey) {
-      return json({ error: 'Email is not configured yet (missing RESEND_API_KEY secret).' }, 501);
-    }
 
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
@@ -109,24 +101,18 @@ Deno.serve(async (req) => {
     const link = siteUrl && siteUrl !== '*' ? `${siteUrl}/?screen=${LINK_SCREEN[status]}` : null;
     const { subject, body } = STATUS_CONTENT[status](jobTitle, link);
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: application.email,
-        subject,
-        html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-          <p>Hi ${application.full_name || 'there'},</p>
-          <p>${body}</p>
-          <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
-        </div>`,
-      }),
+    const result = await sendEmail({
+      to: application.email,
+      subject,
+      html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
+        <p>Hi ${application.full_name || 'there'},</p>
+        <p>${body}</p>
+        <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+      </div>`,
     });
 
-    if (!resendRes.ok) {
-      const errBody = await resendRes.json().catch(() => ({}));
-      return json({ error: errBody.message || 'Failed to send email.' }, 502);
+    if (!result.ok) {
+      return json({ error: result.error || 'Failed to send email.' }, result.status || 502);
     }
 
     return json({ sent: true });
