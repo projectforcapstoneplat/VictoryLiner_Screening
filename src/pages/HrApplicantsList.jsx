@@ -1503,7 +1503,13 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                 {s.job?.category && <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{s.job.category}</div>}
                               </td>
                               <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'total' ? 700 : 400, color: scoreColor(s.totalScore) }}>{s.totalScore != null ? `${s.totalScore}%` : '—'}</td>
-                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'resume' ? 700 : 400, color: scoreColor(s.resumeScore) }}>{s.resumeScore != null ? `${s.resumeScore}%` : '—'}</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'resume' ? 700 : 400, color: evalStatus[s.applicationId] === 'error' ? 'var(--red-700)' : scoreColor(s.resumeScore) }}>
+                                {evalStatus[s.applicationId] === 'error' ? (
+                                  <span title={evalErrors[s.applicationId] || 'AI evaluation failed — expand this row to retry.'}>⚠ Failed</span>
+                                ) : (
+                                  s.resumeScore != null ? `${s.resumeScore}%` : '—'
+                                )}
+                              </td>
                               <td style={{ padding: '12px', fontSize: 'var(--text-sm)', fontWeight: scoreType === 'interview' ? 700 : 400, color: scoreColor(s.interviewScore) }}>{s.interviewScore != null ? `${s.interviewScore}%` : '—'}</td>
                               <td style={{ padding: '12px' }}>
                                 <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: status.bg, color: status.fg, whiteSpace: 'nowrap' }}>{status.label}</span>
