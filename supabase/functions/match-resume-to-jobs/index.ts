@@ -227,8 +227,12 @@ Deno.serve(async (req) => {
     // on all of MAX_JOBS_PER_CALL sequentially could take well over a
     // minute; in parallel it takes roughly as long as the single slowest
     // call. Each batch only ever touches its own jobs' rows (via upsert),
-    // so there's no shared-state race between them.
-    await Promise.all(batches.map(async (batch) => {
+    // so there's no shared-state race between them. Each job returns its
+    // own true/false outcome instead of the caller just assuming every
+    // unscored job succeeded — a batch that fails (quota, bad response)
+    // used to still get reported as scored, silently stranding those jobs
+    // with no retry until the WHOLE match cache went empty again.
+    const batchResults = await Promise.all(batches.map(async (batch) => {
       const userPrompt = buildBatchPrompt(resumeContext, batch, criteriaByJob);
 
       const { ok, body: geminiBody } = await callGemini(GEMINI_MODEL, {
@@ -243,18 +247,18 @@ Deno.serve(async (req) => {
       // bad response) shouldn't stop the rest of the jobs from being scored.
       if (!ok) {
         console.error(`[match-resume-to-jobs] Gemini batch call failed (size=${batch.length})`, JSON.stringify(geminiBody));
-        return;
+        return batch.map(() => false);
       }
 
       const candidate = geminiBody.candidates?.[0];
       if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) {
         console.error(`[match-resume-to-jobs] bad finishReason=${candidate.finishReason} for batch (size=${batch.length})`);
-        return;
+        return batch.map(() => false);
       }
       const text = candidate?.content?.parts?.[0]?.text;
       if (!text) {
         console.error(`[match-resume-to-jobs] empty text for batch (size=${batch.length})`, JSON.stringify(geminiBody));
-        return;
+        return batch.map(() => false);
       }
 
       // deno-lint-ignore no-explicit-any
@@ -263,14 +267,14 @@ Deno.serve(async (req) => {
         parsedResults = JSON.parse(text)?.results ?? [];
       } catch (err) {
         console.error(`[match-resume-to-jobs] batch parse failed (size=${batch.length})`, err instanceof Error ? err.message : err, text);
-        return;
+        return batch.map(() => false);
       }
 
-      await Promise.all(batch.map(async (job, i) => {
+      return Promise.all(batch.map(async (job, i) => {
         const entry = parsedResults.find((r) => r.jobIndex === i + 1);
         if (!entry) {
           console.error(`[match-resume-to-jobs] no result for jobIndex=${i + 1} (job=${job.id})`);
-          return;
+          return false;
         }
         const score = Math.max(0, Math.min(100, Math.round(Number(entry.score) || 0)));
         await adminClient.from('resume_job_matches').upsert(
@@ -285,8 +289,11 @@ Deno.serve(async (req) => {
           },
           { onConflict: 'applicant_id,job_id' },
         );
+        return true;
       }));
     }));
+
+    const scoredCount = batchResults.flat().filter(Boolean).length;
 
     const { data: allMatches, error: allMatchesError } = await callerClient
       .from('resume_job_matches')
@@ -296,7 +303,11 @@ Deno.serve(async (req) => {
       return json({ error: allMatchesError.message }, 500);
     }
 
-    return json({ matches: allMatches ?? [], scoredThisCall: unscored.length, remainingJobs: (jobs ?? []).length - scoredJobIds.size - unscored.length });
+    return json({
+      matches: allMatches ?? [],
+      scoredThisCall: scoredCount,
+      remainingJobs: (jobs ?? []).length - scoredJobIds.size - scoredCount,
+    });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
