@@ -195,9 +195,22 @@ export function JobPostingForm({ job, profile, nav }) {
       return;
     }
     setSaving(true);
+    // Built as an explicit whitelist, not `...form` — `form` is seeded from
+    // whatever job object the caller passed in, and HrDashboard.jsx's job
+    // list (listAllJobs in lib/jobs.js) enriches those with computed,
+    // non-column fields (applicant_count, advanced_count,
+    // positions_remaining) for display. Spreading form wholesale into the
+    // update payload sent those straight to PostgREST and got rejected with
+    // "Could not find the 'advanced_count' column."
     const payload = {
-      ...form,
+      title: form.title,
+      category: form.category,
+      location: form.location,
+      employment_type: form.employment_type,
       open_positions: Number(form.open_positions) || 1,
+      description: form.description,
+      required_qualifications: form.required_qualifications,
+      preferred_qualifications: form.preferred_qualifications,
       application_deadline: form.application_deadline || null,
       min_resume_match_percent: form.min_resume_match_percent === '' || form.min_resume_match_percent == null
         ? null
@@ -349,19 +362,6 @@ export function JobPostingForm({ job, profile, nav }) {
                   </>
                 )}
               </div>
-              {step === LAST_STEP && (
-                <button
-                  onClick={() => nav('hr-jobs')}
-                  className="btn-animate"
-                  style={{
-                    display: 'block', width: 'fit-content', margin: '0 auto', padding: '9px 20px', borderRadius: 999,
-                    border: '1px solid var(--border-hairline)', background: 'transparent', cursor: 'pointer',
-                    fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'inherit',
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
             </div>
           </div>
         </FadeSection>
