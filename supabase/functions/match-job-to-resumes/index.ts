@@ -34,27 +34,46 @@ const GEMINI_MODEL = 'gemini-3.6-flash';
 // trade-off is scoped to "very high applicant volume," not normal use.
 const MAX_RESUMES_PER_CALL = 20;
 
-const EVALUATION_SCHEMA = {
+// Resumes are scored in batches of this size per Gemini call instead of one
+// call per resume — same AI evaluation (still one model judgment per
+// applicant, still fully semantic), just fewer round trips, since Gemini's
+// free-tier quota is metered per-request (RPD), not per-applicant-evaluated.
+// 5 keeps a single batch's prompt small enough to stay well inside the
+// per-request token limit while still cutting call volume 5x.
+const BATCH_SIZE = 5;
+
+const BATCH_EVALUATION_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    score: { type: 'INTEGER', description: 'Overall match score from 0 (no fit) to 100 (excellent fit), weighted toward higher-weight criteria.' },
-    explanation: { type: 'STRING', description: '2-4 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
-    criteriaAssessment: {
+    results: {
       type: 'ARRAY',
-      description: 'One entry per screening criterion provided.',
+      description: 'Exactly one entry per applicant provided below, matched back by applicantIndex — order does not matter.',
       items: {
         type: 'OBJECT',
         properties: {
-          keyword: { type: 'STRING' },
-          weight: { type: 'INTEGER' },
-          matched: { type: 'BOOLEAN', description: 'True if the resume demonstrates this, even via different wording.' },
-          reasoning: { type: 'STRING', description: 'One short sentence citing what in the resume supports or fails this criterion.' },
+          applicantIndex: { type: 'INTEGER', description: 'The Applicant N number (from "=== Applicant N ===") this result is for.' },
+          score: { type: 'INTEGER', description: 'Overall match score from 0 (no fit) to 100 (excellent fit), weighted toward higher-weight criteria.' },
+          explanation: { type: 'STRING', description: '2-4 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
+          criteriaAssessment: {
+            type: 'ARRAY',
+            description: 'One entry per screening criterion provided.',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                keyword: { type: 'STRING' },
+                weight: { type: 'INTEGER' },
+                matched: { type: 'BOOLEAN', description: 'True if the resume demonstrates this, even via different wording.' },
+                reasoning: { type: 'STRING', description: 'One short sentence citing what in the resume supports or fails this criterion.' },
+              },
+              required: ['keyword', 'weight', 'matched', 'reasoning'],
+            },
+          },
         },
-        required: ['keyword', 'weight', 'matched', 'reasoning'],
+        required: ['applicantIndex', 'score', 'explanation', 'criteriaAssessment'],
       },
     },
   },
-  required: ['score', 'explanation', 'criteriaAssessment'],
+  required: ['results'],
 };
 
 const SYSTEM_PROMPT =
@@ -76,7 +95,9 @@ const SYSTEM_PROMPT =
   '(e.g. a veterinary technician occasionally reassuring pet owners, an engineer occasionally emailing clients) ' +
   'deserves meaningfully less credit for that same criterion — not zero, but say explicitly in your explanation ' +
   'that it was incidental, not their core function, rather than treating brief exposure as full satisfaction of ' +
-  'the criterion.';
+  'the criterion. You may be given several applicants to evaluate against this same job in one request — judge ' +
+  'each one entirely independently and on their own merits against the criteria; never compare, rank, or curve ' +
+  'applicants against each other.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -150,49 +171,89 @@ Deno.serve(async (req) => {
       return json({ error: resumesError.message }, 500);
     }
 
+    // Anyone HR has already scheduled a personal interview for (on any of
+    // their applications) is deep in an active hiring process already —
+    // scoring them against a freshly published, unrelated job and emailing
+    // them "a new opening matches you" would just be noise, and spends AI
+    // quota nobody's going to act on. Excluded before the alreadyScored
+    // check runs, not just skipped at notify time, so they never even get a
+    // resume_job_matches row written for a job they're not going to see.
+    const { data: scheduledApps } = await adminClient
+      .from('applications')
+      .select('applicant_id')
+      .not('scheduled_interview_at', 'is', null);
+    const scheduledApplicantIds = new Set((scheduledApps ?? []).map((a) => a.applicant_id));
+    const eligibleResumes = (resumes ?? []).filter((r) => !scheduledApplicantIds.has(r.applicant_id));
+
     const { data: existing } = await adminClient
       .from('resume_job_matches')
       .select('applicant_id')
       .eq('job_id', jobId);
     const alreadyScored = new Set((existing ?? []).map((m) => m.applicant_id));
-    const unscored = (resumes ?? []).filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
+    const unscored = eligibleResumes.filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
+    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedScheduled=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
 
-    // Scored concurrently, not one applicant at a time — each is an
-    // independent Gemini call (a few seconds each), so publishing a job
-    // against a real applicant pool waiting on them sequentially could take
-    // minutes; in parallel it takes roughly as long as the single slowest
-    // call. Each iteration returns its own outcome rather than mutating a
-    // shared counter directly, then those get summed once every call has
-    // settled — avoids any doubt about concurrent increments.
-    const results = await Promise.all(unscored.map(async (resume) => {
-      const resumeText = buildResumeText(resume);
-      const userPrompt = buildPrompt(job, criteria ?? [], resumeText, resume);
+    const batches: (typeof unscored)[] = [];
+    for (let i = 0; i < unscored.length; i += BATCH_SIZE) batches.push(unscored.slice(i, i + BATCH_SIZE));
+
+    // Batches run concurrently, not one at a time — each is an independent
+    // Gemini call (a few seconds each), so publishing a job against a real
+    // applicant pool waiting on them sequentially could take minutes; in
+    // parallel it takes roughly as long as the single slowest call. Each
+    // batch returns its own array of outcomes rather than mutating a shared
+    // counter directly, then those get flattened and summed once every
+    // batch has settled — avoids any doubt about concurrent increments.
+    const batchResults = await Promise.all(batches.map(async (batch) => {
+      const userPrompt = buildBatchPrompt(job, criteria ?? [], batch);
 
       const { ok, body: geminiBody } = await callGemini(GEMINI_MODEL, {
         contents: [{ parts: [{ text: userPrompt }] }],
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        generationConfig: { responseMimeType: 'application/json', responseSchema: EVALUATION_SCHEMA },
+        generationConfig: { responseMimeType: 'application/json', responseSchema: BATCH_EVALUATION_SCHEMA },
       });
-      if (!ok) return { scored: false, notified: false };
+      if (!ok) {
+        console.error(`[match-job-to-resumes] Gemini batch call failed (size=${batch.length})`, JSON.stringify(geminiBody));
+        return batch.map(() => ({ scored: false, notified: false }));
+      }
 
       const candidate = geminiBody.candidates?.[0];
-      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) return { scored: false, notified: false };
+      if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) {
+        console.error(`[match-job-to-resumes] bad finishReason=${candidate.finishReason} for batch (size=${batch.length})`);
+        return batch.map(() => ({ scored: false, notified: false }));
+      }
       const text = candidate?.content?.parts?.[0]?.text;
-      if (!text) return { scored: false, notified: false };
+      if (!text) {
+        console.error(`[match-job-to-resumes] empty text for batch (size=${batch.length})`, JSON.stringify(geminiBody));
+        return batch.map(() => ({ scored: false, notified: false }));
+      }
 
+      // deno-lint-ignore no-explicit-any
+      let parsedResults: any[];
       try {
-        const parsed = JSON.parse(text);
-        const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0)));
+        parsedResults = JSON.parse(text)?.results ?? [];
+      } catch (err) {
+        console.error(`[match-job-to-resumes] batch parse failed (size=${batch.length})`, err instanceof Error ? err.message : err, text);
+        return batch.map(() => ({ scored: false, notified: false }));
+      }
+
+      return Promise.all(batch.map(async (resume, i) => {
+        const entry = parsedResults.find((r) => r.applicantIndex === i + 1);
+        if (!entry) {
+          console.error(`[match-job-to-resumes] no result for applicantIndex=${i + 1} (applicant=${resume.applicant_id})`);
+          return { scored: false, notified: false };
+        }
+
+        const score = Math.max(0, Math.min(100, Math.round(Number(entry.score) || 0)));
         await adminClient.from('resume_job_matches').upsert(
           {
             applicant_id: resume.applicant_id,
             job_id: jobId,
             score,
-            explanation: parsed.explanation ?? '',
-            criteria_assessment: parsed.criteriaAssessment ?? [],
+            explanation: entry.explanation ?? '',
+            criteria_assessment: entry.criteriaAssessment ?? [],
             model: GEMINI_MODEL,
             matched_at: new Date().toISOString(),
           },
@@ -218,15 +279,14 @@ Deno.serve(async (req) => {
           return { scored: true, notified };
         }
         return { scored: true, notified: false };
-      } catch {
-        return { scored: false, notified: false };
-      }
+      }));
     }));
 
+    const results = batchResults.flat();
     const scoredCount = results.filter((r) => r.scored).length;
     const notifiedCount = results.filter((r) => r.notified).length;
 
-    return json({ scored: scoredCount, notified: notifiedCount, remaining: (resumes ?? []).length - alreadyScored.size - unscored.length });
+    return json({ scored: scoredCount, notified: notifiedCount, remaining: eligibleResumes.length - alreadyScored.size - unscored.length });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
@@ -297,11 +357,26 @@ function computeYearsOfExperience(workExperience: any[]): number | null {
 }
 
 // deno-lint-ignore no-explicit-any
-function buildPrompt(job: any, criteria: any[], resumeText: string, resume: any): string {
+function buildJobContext(job: any, criteria: any[]): string {
   const criteriaText = criteria.length
     ? criteria.map((c) => `- ${c.keyword} (weight ${c.weight}/5)`).join('\n')
     : '(No specific criteria defined — evaluate general fit against the job description and qualifications below.)';
 
+  return [
+    `Job Title: ${job.title}`,
+    job.location ? `Job Location: ${job.location}` : null,
+    job.description ? `Description: ${job.description}` : null,
+    job.required_qualifications ? `Required Qualifications: ${job.required_qualifications}` : null,
+    job.preferred_qualifications ? `Preferred Qualifications: ${job.preferred_qualifications}` : null,
+    `\nScreening Criteria:\n${criteriaText}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+// deno-lint-ignore no-explicit-any
+function buildApplicantBlock(resume: any, index: number): string {
+  const resumeText = buildResumeText(resume);
   const totalYears = computeYearsOfExperience(resume.work_experience);
 
   const eligibilityFacts: string[] = [];
@@ -331,19 +406,21 @@ function buildPrompt(job: any, criteria: any[], resumeText: string, resume: any)
   }
 
   return [
-    `Job Title: ${job.title}`,
-    job.location ? `Job Location: ${job.location}` : null,
-    job.description ? `Description: ${job.description}` : null,
-    job.required_qualifications ? `Required Qualifications: ${job.required_qualifications}` : null,
-    job.preferred_qualifications ? `Preferred Qualifications: ${job.preferred_qualifications}` : null,
-    `\nScreening Criteria:\n${criteriaText}`,
-    totalYears != null ? `\nTotal Years of Work Experience (already computed from the dates below — use this number as-is, don't recompute): ${totalYears}` : null,
-    eligibilityFacts.length ? `\nDriving & Work Eligibility:\n${eligibilityFacts.join('\n')}` : null,
-    `\nApplicant's Resume Information:\n${resumeText || '(No skills, experience, education, or certifications provided.)'}`,
-    resume.summary ? `\nApplicant's Professional Summary:\n${resume.summary}` : null,
+    `\n=== Applicant ${index} (applicantIndex: ${index}) ===`,
+    totalYears != null ? `Total Years of Work Experience (already computed from the dates below — use this number as-is, don't recompute): ${totalYears}` : null,
+    eligibilityFacts.length ? `Driving & Work Eligibility:\n${eligibilityFacts.join('\n')}` : null,
+    `Resume Information:\n${resumeText || '(No skills, experience, education, or certifications provided.)'}`,
+    resume.summary ? `Professional Summary:\n${resume.summary}` : null,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// deno-lint-ignore no-explicit-any
+function buildBatchPrompt(job: any, criteria: any[], batch: any[]): string {
+  const jobContext = buildJobContext(job, criteria);
+  const applicantBlocks = batch.map((resume, i) => buildApplicantBlock(resume, i + 1)).join('\n');
+  return `${jobContext}\n\nEvaluate each of the following ${batch.length} applicant(s) independently against the SAME job above — do not compare, rank, or curve them against each other. Return one result per applicant in the "results" array, each tagged with the applicantIndex shown in its "=== Applicant N ===" header so it can be matched back.\n${applicantBlocks}`;
 }
 
 function json(body: unknown, status = 200) {

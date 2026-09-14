@@ -132,11 +132,16 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
   const [emailTaken, setEmailTaken] = useState(false);
   const [caLoading, setCaLoading] = useState(false);
   const [confirmationSent, setConfirmationSent] = useState(false);
+  const [termsShake, setTermsShake] = useState(0);
 
   const passwordChecklist = getPasswordChecklist(caPassword);
   const passwordValid = isPasswordValid(caPassword);
   const passwordsMatch = verifyPassword.length > 0 && caPassword === verifyPassword;
-  const canSubmit = passwordValid && passwordsMatch && consent && caEmail.trim().length > 0;
+  // Consent deliberately isn't part of this — the button stays clickable
+  // even without it, so clicking gives an obvious "you missed this" shake +
+  // warning instead of just silently doing nothing the way a disabled
+  // button would.
+  const canSubmit = passwordValid && passwordsMatch && caEmail.trim().length > 0;
 
   const handleSignIn = async () => {
     setError('');
@@ -190,7 +195,8 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
     setCaError('');
     setEmailTaken(false);
     if (!consent) {
-      setCaError('Please consent to the terms and conditions to continue.');
+      setCaError('Please read and agree to the Terms and Conditions before creating an account.');
+      setTermsShake((n) => n + 1);
       return;
     }
     if (!passwordValid) {
@@ -233,6 +239,13 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
         @media (max-width: 880px) {
           .auth-panel-image, .auth-panel-form { transform: none !important; }
         }
+        @keyframes terms-shake {
+          10%, 90% { transform: translateX(-1px); }
+          20%, 80% { transform: translateX(2px); }
+          30%, 50%, 70% { transform: translateX(-4px); }
+          40%, 60% { transform: translateX(4px); }
+        }
+        .terms-shake { animation: terms-shake 0.5s; }
       `}</style>
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
@@ -436,14 +449,22 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                         TermsModal) — this is just the entry point plus a
                         status readout, not a second, separate checkbox for
                         the same thing. */}
-                    <div>
+                    <div
+                      key={termsShake}
+                      className={termsShake > 0 && !consent ? 'terms-shake' : ''}
+                      style={!consent && termsShake > 0 ? { background: 'var(--red-50, #fdeaea)', borderRadius: 8, padding: 10, margin: '-10px' } : undefined}
+                    >
                       <button
                         onClick={() => setShowTermsModal(true)}
                         style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontSize: 'var(--text-sm)', fontWeight: 700, color: consent ? '#0ca30c' : 'var(--action-primary-bg)' }}
                       >
                         {consent ? '✓ Agreed to the Terms and Conditions' : 'Read the Terms and Conditions'} &rarr;
                       </button>
-                      {!consent && <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '6px 0 0' }}>You'll need to read and agree before creating an account.</p>}
+                      {!consent && (
+                        <p style={{ fontSize: 'var(--text-xs)', opacity: termsShake > 0 ? 1 : 0.6, color: termsShake > 0 ? 'var(--red-700)' : undefined, fontWeight: termsShake > 0 ? 700 : 400, margin: '6px 0 0' }}>
+                          {termsShake > 0 ? "⚠ You need to agree to this before we can create your account." : "You'll need to read and agree before creating an account."}
+                        </p>
+                      )}
                     </div>
                     <p style={{ fontSize: 'var(--text-sm)', margin: 0 }}>By clicking the "Create Account" button, you are agreeing to our Recruiting Data Privacy Notice.</p>
                     <FormError
