@@ -330,7 +330,7 @@ export function Header({ links, onLogoClick, compact = false, nav, accessory, pr
       <button
         type="button"
         className="app-header-logo"
-        onClick={onLogoClick || (() => { window.location.href = '/'; })}
+        onClick={onLogoClick || (nav ? () => nav('home') : () => { window.location.href = '/'; })}
         aria-label="Victory Liner Careers — go to homepage"
         style={{
           cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: 'var(--font-display)',

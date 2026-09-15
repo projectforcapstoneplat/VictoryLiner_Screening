@@ -354,6 +354,13 @@ export function App() {
   // that lands here (fresh sign-up, Google sign-in, or just revisiting)
   // rather than only right after signup — so there's one single place this
   // is enforced instead of duplicating the check at every entry point.
+  //
+  // hasResume starts out null (unknown) and only resolves once the
+  // getMyResume check finishes — without gating on that here too, an
+  // applicant with no resume would render Homepage first (since hasResume
+  // === false isn't true yet) and then flash to ResumeForm a moment later
+  // once it resolves, every single time they land on 'home'.
+  if (profile?.role === 'applicant' && hasResume === null) return <LoadingScreen />;
   if (profile?.role === 'applicant' && hasResume === false) {
     return <ResumeForm profile={profile} nav={nav} onResumeSaved={() => setHasResume(true)} />;
   }

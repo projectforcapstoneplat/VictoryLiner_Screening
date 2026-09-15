@@ -308,7 +308,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-spinner, .loading-pulse, .hero-zoom, .form-error {
+  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-pulse, .hero-zoom, .form-error {
     animation: none !important;
     transition: none !important;
   }
@@ -490,6 +490,34 @@ a {
   }
   .job-card-title {
     font-size: var(--text-lg) !important;
+  }
+}
+
+/* JobDetails.jsx's sticky "Apply" bar — see the comment at its render site
+   for why this exists (the sidebar's real Apply button lands below the
+   entire job description on a phone otherwise). Hidden by default; only
+   shown at the same 640px breakpoint everything else on this page reflows
+   at, and only rendered by JobDetails.jsx in the first place — this
+   selector doesn't need to worry about colliding with any other screen. */
+.mobile-apply-bar {
+  display: none;
+}
+@media (max-width: 640px) {
+  .mobile-apply-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    background: var(--surface-card);
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.12);
+    padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  .mobile-apply-bar:empty {
+    display: none;
   }
 }
 

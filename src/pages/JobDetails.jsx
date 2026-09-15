@@ -64,6 +64,51 @@ function SectionCard({ icon, title, body, delay }) {
   );
 }
 
+// Shared between the desktop sidebar card and the mobile sticky bottom bar
+// (see .mobile-apply-bar in styles.css) so the two surfaces can never drift
+// out of sync on what state shows what — `compact` just drops the
+// explanatory copy the bottom bar has no room for, keeping only the button.
+function ApplyAction({ canApply, profile, matchState, applying, applyError, onApply, onSignIn, onBackHome, compact }) {
+  if (!canApply) {
+    return <Button variant="primary" size="md" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>Applications Closed</Button>;
+  }
+  if (!profile) {
+    return (
+      <>
+        {!compact && (
+          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.65, margin: 0, lineHeight: 1.5 }}>
+            Sign in and build your resume — we'll tell you instantly if you're a match for this role.
+          </p>
+        )}
+        <Button variant="primary" size="md" onClick={onSignIn}>Sign In to Apply</Button>
+      </>
+    );
+  }
+  if (matchState.status === 'checking') {
+    return <Button variant="primary" size="md" disabled>Checking your match…</Button>;
+  }
+  if (matchState.qualifies) {
+    return (
+      <>
+        <Button variant="primary" size="md" disabled={applying} onClick={onApply}>{applying ? 'Applying…' : 'Apply Now'}</Button>
+        {!compact && applyError && <p style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', margin: 0 }}>{applyError}</p>}
+      </>
+    );
+  }
+  // Genuinely doesn't qualify — no meaningful action to pin to a persistent
+  // mobile bar, so the compact form renders nothing rather than a floating
+  // "Back to Home" that would look like it's begging you to leave.
+  if (compact) return null;
+  return (
+    <>
+      <p style={{ fontSize: 'var(--text-xs)', opacity: 0.65, margin: 0, lineHeight: 1.5 }}>
+        This role isn't one of your current AI matches yet.
+      </p>
+      <Button variant="ghost" size="md" onClick={onBackHome}>Back to Home</Button>
+    </>
+  );
+}
+
 function MetaRow({ icon, label }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--text-sm)' }}>
@@ -196,27 +241,28 @@ export function JobDetails({ job, nav, profile }) {
                   />
                 )}
               </div>
-              {!canApply ? (
-                <Button variant="primary" size="md" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>Applications Closed</Button>
-              ) : matchState.status === 'checking' ? (
-                <Button variant="primary" size="md" disabled>Checking your match…</Button>
-              ) : matchState.qualifies ? (
-                <>
-                  <Button variant="primary" size="md" disabled={applying} onClick={handleApply}>{applying ? 'Applying…' : 'Apply Now'}</Button>
-                  {applyError && <p style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', margin: 0 }}>{applyError}</p>}
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 'var(--text-xs)', opacity: 0.65, margin: 0, lineHeight: 1.5 }}>
-                    This role isn't one of your current AI matches yet.
-                  </p>
-                  <Button variant="ghost" size="md" onClick={() => nav('home')}>Back to Home</Button>
-                </>
-              )}
+              <ApplyAction
+                canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
+                onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={() => nav('home')}
+              />
             </div>
           </div>
         </div>
       </section>
+
+      {/* Mobile-only — on a narrow screen the sidebar above (and its Apply
+          button) lands below four long paragraphs of description, so the
+          one action that matters on this page is invisible until a visitor
+          scrolls past everything else. This mirrors the sticky bottom "Apply"
+          bar virtually every job board uses on mobile for the same reason.
+          Hidden on desktop via .mobile-apply-bar in styles.css. */}
+      <div className="mobile-apply-bar">
+        <ApplyAction
+          canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
+          onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={() => nav('home')}
+          compact
+        />
+      </div>
 
       <div style={{ marginTop: 60 }}><Footer nav={nav} /></div>
     </div>

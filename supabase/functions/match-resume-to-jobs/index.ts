@@ -49,7 +49,7 @@ const BATCH_EVALUATION_SCHEMA = {
         properties: {
           jobIndex: { type: 'INTEGER', description: 'The Job N number (from "=== Job N ===") this result is for.' },
           score: { type: 'INTEGER', description: 'Overall match score from 0 (no fit) to 100 (excellent fit), weighted toward higher-weight criteria.' },
-          explanation: { type: 'STRING', description: '2-4 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
+          explanation: { type: 'STRING', description: '1-2 sentence explanation of the score, referencing specific evidence from the resume and which criteria drove it up or down.' },
           criteriaAssessment: {
             type: 'ARRAY',
             description: "One entry per that job's own screening criteria — never mix in another job's criteria.",
@@ -73,27 +73,21 @@ const BATCH_EVALUATION_SCHEMA = {
 };
 
 const SYSTEM_PROMPT =
-  'You are an HR job-matching assistant for a bus transportation company. You are given one applicant\'s general ' +
-  'resume (not tailored to any specific job) and one open job\'s screening criteria and description. Judge how well ' +
-  'the resume fits this job SEMANTICALLY: credit the applicant for expressing the same meaning in different words ' +
-  '(e.g. "followed all traffic regulations" satisfies a "Safe Driving" criterion, "CPR certified" satisfies "First ' +
-  'Aid"), not just literal keyword matches. Weigh higher-weight criteria more heavily in the overall score. Be ' +
-  "concrete in your reasoning — cite what the resume actually says, don't just restate the criterion. If the resume " +
-  'has no evidence for a criterion, say so plainly rather than guessing generously. The score must be driven ' +
-  'entirely by the weighted Screening Criteria listed below — general background facts (current location, highest ' +
-  'educational attainment, driving/work eligibility) are context only, not scoring criteria in themselves. Do not ' +
-  'award points for having a degree, living near the job\'s location, or holding a license/clearance unless a ' +
-  'specific listed criterion actually asks for that. When judging whether experience satisfies a listed criterion, ' +
-  'weigh how CENTRAL that skill actually was to the applicant\'s role, not merely whether something similar is ' +
-  'mentioned. A role where the skill was the core function (e.g. a retail cashier or call center agent, for a ' +
-  '"customer service experience" criterion) deserves strong credit even though the industry differs. A role where ' +
-  'a similar-sounding activity was only a minor, incidental part of a fundamentally different, specialized job ' +
-  '(e.g. a veterinary technician occasionally reassuring pet owners, an engineer occasionally emailing clients) ' +
-  'deserves meaningfully less credit for that same criterion — not zero, but say explicitly in your explanation ' +
-  'that it was incidental, not their core function, rather than treating brief exposure as full satisfaction of ' +
-  'the criterion. You may be given several open jobs to evaluate this same resume against in one request — treat ' +
-  'each job as fully separate: judge it only against its own listed criteria and description, never let one job\'s ' +
-  'criteria or context bleed into another\'s assessment.';
+  'You are an HR job-matching assistant for a bus transportation company, scoring one applicant\'s resume against ' +
+  'one open job\'s screening criteria. Judge fit SEMANTICALLY, not by literal keywords — credit equivalent phrasing ' +
+  '(e.g. "followed all traffic regulations" satisfies "Safe Driving"; "CPR certified" satisfies "First Aid"). ' +
+  'Weigh higher-weight criteria more heavily in the overall score. Cite concrete resume evidence in your reasoning; ' +
+  'if a criterion has no evidence, say so rather than guessing generously. Score ONLY on the weighted Screening ' +
+  'Criteria — background facts (location, education level, license/clearance) are context, not points, unless a ' +
+  'criterion specifically asks for them. Credit experience based on how CENTRAL the skill was to the applicant\'s ' +
+  'actual role: a cashier or call-center agent gets strong credit for "customer service experience" even in a ' +
+  'different industry, but a vet tech occasionally reassuring owners or an engineer occasionally emailing clients ' +
+  'gets meaningfully less credit for that same criterion — say explicitly it was incidental, not zero. A skill ' +
+  'listed only in the Skills section with nothing else in the resume (no work experience, description, or ' +
+  'certification) backing it up is weak, self-reported evidence — don\'t award high credit for a high-weight ' +
+  'criterion on that alone; note the lack of corroboration in your reasoning instead of treating the bare mention ' +
+  'as proof. When scoring multiple jobs in one request, treat each fully independently: never let one job\'s ' +
+  'criteria or context bleed into another\'s.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -238,9 +232,15 @@ Deno.serve(async (req) => {
       const { ok, body: geminiBody } = await callGemini(GEMINI_MODEL, {
         contents: [{ parts: [{ text: userPrompt }] }],
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        // maxOutputTokens is a defensive ceiling, not a tuned budget — a
+        // batch of BATCH_SIZE jobs' worth of scores/explanations/criteria
+        // breakdowns comfortably fits well under this; it just stops a
+        // batch with unusually many criteria from producing a runaway
+        // response instead of failing cleanly.
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: BATCH_EVALUATION_SCHEMA,
+          maxOutputTokens: 8192,
         },
       });
       // Best-effort per batch — one batch's failure (quota, safety block,

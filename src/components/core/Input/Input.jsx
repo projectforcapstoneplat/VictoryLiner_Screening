@@ -16,7 +16,7 @@ function EyeIcon({ open }) {
   );
 }
 
-export function Input({ label, type = 'text', placeholder, value, onChange, hint, style, ...rest }) {
+export function Input({ label, type = 'text', placeholder, value, onChange, hint, error, style, ...rest }) {
   const [revealed, setRevealed] = useState(false);
   const isPassword = type === 'password';
   return (
@@ -31,7 +31,7 @@ export function Input({ label, type = 'text', placeholder, value, onChange, hint
           {...rest}
           style={{
             height: 49, width: '100%', boxSizing: 'border-box', padding: isPassword ? '0 46px 0 18px' : '0 18px',
-            background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)',
+            background: 'var(--surface-field)', boxShadow: error ? 'inset 0 0 0 1.5px var(--red-700)' : 'var(--shadow-field-inset)',
             border: 'none', borderRadius: 0, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)',
           }}
         />

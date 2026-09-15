@@ -122,7 +122,7 @@ export function RepeatableSection({ title, icon, hint, delay, entries, fields, o
 // Chip-based multi-value input (skills) — reduces free-text typo/inconsistency
 // noise ("Defensive driving" vs "defensive-driving") compared to a single
 // comma-separated field, without needing a fixed skills taxonomy.
-export function TagInput({ label, values, onChange, placeholder, hint }) {
+export function TagInput({ label, values, onChange, placeholder, hint, error }) {
   const [draft, setDraft] = useState('');
 
   // Splits on comma at commit time (not just on individual comma keypresses)
@@ -152,7 +152,7 @@ export function TagInput({ label, values, onChange, placeholder, hint }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: 'var(--font-ui)' }}>
       {label && <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{label}</span>}
-      <div style={{ ...FIELD_STYLE, minHeight: 49, height: 'auto', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '8px 14px' }}>
+      <div style={{ ...FIELD_STYLE, minHeight: 49, height: 'auto', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '8px 14px', ...(error ? { boxShadow: 'inset 0 0 0 1.5px var(--red-700)' } : {}) }}>
         {values.map((v) => (
           <span key={v} className="chip-pop" style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)',

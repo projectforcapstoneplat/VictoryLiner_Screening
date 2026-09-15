@@ -238,7 +238,7 @@ export function JobPostingForm({ job, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} nav={nav} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto', padding: '0 20px' }}>
         <button
           onClick={() => nav('hr-jobs')}
