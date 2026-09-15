@@ -37,6 +37,18 @@ import { listApplicationsForApplicant } from '../lib/applications.js';
 
 const PULSE_BLOCK = { className: 'loading-pulse', style: { background: 'var(--surface-page-alt)', animation: 'skeletonPulse 1.4s ease-in-out infinite', borderRadius: 4 } };
 
+// Cycled while the one-time AI match call is in flight (see the loading
+// effect below) — a real match pass can take several seconds, and a single
+// static sentence the whole time reads as possibly-stuck. Ends on "Almost
+// there…" and just holds there rather than looping, so it never contradicts
+// itself by cycling back to "Comparing…" right before actually finishing.
+const MATCHING_MESSAGES = [
+  'Comparing your resume against open roles…',
+  'Calibrating match scores…',
+  'Weighing your skills and experience…',
+  'Almost there…',
+];
+
 const REFRESH_ICON = <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 6.5A8 8 0 0 0 4.6 9M4.6 9V4M4.6 9h4.9" /><path d="M6.5 17.5A8 8 0 0 0 19.4 15M19.4 15v5M19.4 15h-4.9" /></svg>;
 const CHECK_ICON = <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>;
 
@@ -73,6 +85,15 @@ export function JobMatches({ profile, nav }) {
   const [checking, setChecking] = useState(false);
   const [checkMessage, setCheckMessage] = useState('');
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
+  const [matchingMsgIndex, setMatchingMsgIndex] = useState(0);
+
+  useEffect(() => {
+    if (!loading) return;
+    const id = setInterval(() => {
+      setMatchingMsgIndex((i) => Math.min(i + 1, MATCHING_MESSAGES.length - 1));
+    }, 2200);
+    return () => clearInterval(id);
+  }, [loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +175,7 @@ export function JobMatches({ profile, nav }) {
               <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 8px', fontFamily: 'var(--font-display)' }}>Jobs That Match You</h1>
               <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0 }}>
                 {loading
-                  ? "Our AI is comparing your resume against every open position — this takes a few seconds."
+                  ? MATCHING_MESSAGES[matchingMsgIndex]
                   : "Here's what suits your resume, based on our AI's comparison against every open position."}
               </p>
             </div>

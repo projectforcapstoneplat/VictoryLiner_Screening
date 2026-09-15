@@ -11,11 +11,6 @@ export function LoadingScreen() {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24,
     }}>
       <img src={mark} alt="" className="loading-pulse" style={{ width: 72, height: 72, animation: 'pulseScale 1.3s ease-in-out infinite' }} />
-      <div className="loading-spinner" style={{
-        width: 34, height: 34, borderRadius: '50%',
-        border: '3px solid var(--gray-200)', borderTopColor: 'var(--action-primary-bg)',
-        animation: 'spin 0.8s linear infinite',
-      }} />
     </div>
   );
 }

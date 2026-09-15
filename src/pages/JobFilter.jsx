@@ -188,9 +188,11 @@ export function JobFilter({ nav }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: 'var(--font-display)', flexWrap: 'wrap', marginBottom: 8 }}>
             <h1 style={{ fontWeight: 700, fontSize: 'var(--text-6xl)', margin: 0 }}>Search Results</h1>
-            <span style={{ fontWeight: 400, fontSize: 'var(--text-2xl)', opacity: 0.6 }}>
-              ({filteredJobs.length} job{filteredJobs.length === 1 ? '' : 's'} available)
-            </span>
+            {!loading && (
+              <span style={{ fontWeight: 400, fontSize: 'var(--text-2xl)', opacity: 0.6 }}>
+                ({filteredJobs.length} job{filteredJobs.length === 1 ? '' : 's'} available)
+              </span>
+            )}
           </div>
           <p style={{ margin: '0 0 32px', fontSize: 'var(--text-md)', opacity: 0.7 }}>Find a role that fits your skills and start your application today.</p>
         </div>
@@ -205,11 +207,22 @@ export function JobFilter({ nav }) {
           <img src={searchIconOutline} alt="" style={{ width: 22, opacity: 0.6 }} />
         </div>
 
-        <div className="fade-in-up" style={{ animationDelay: '0.14s', display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, marginBottom: 30 }}>
-          <CategoryChip category={ALL_CATEGORIES} active={category === ALL_CATEGORIES} onClick={() => setCategory(ALL_CATEGORIES)} />
-          {categories.map((c) => (
-            <CategoryChip key={c} category={c} active={category === c} onClick={() => setCategory(c)} />
-          ))}
+        {/* The chip row routinely overflows (17+ categories on a 1066px
+            column) with no scrollbar visible on most platforms — without a
+            cue, "All Categories, Accounting & Finance, [cut off]" reads as
+            the complete list, not a scrollable one. The fade signals there's
+            more without needing a visible scrollbar or arrow buttons. */}
+        <div style={{ position: 'relative', marginBottom: 30 }}>
+          <div className="fade-in-up" style={{ animationDelay: '0.14s', display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
+            <CategoryChip category={ALL_CATEGORIES} active={category === ALL_CATEGORIES} onClick={() => setCategory(ALL_CATEGORIES)} />
+            {categories.map((c) => (
+              <CategoryChip key={c} category={c} active={category === c} onClick={() => setCategory(c)} />
+            ))}
+          </div>
+          <div aria-hidden style={{
+            position: 'absolute', top: 0, right: 0, bottom: 8, width: 36, pointerEvents: 'none',
+            background: 'linear-gradient(to right, transparent, var(--surface-page))',
+          }} />
         </div>
 
         {loading ? (

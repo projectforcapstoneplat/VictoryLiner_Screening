@@ -6,7 +6,6 @@
 // to is only knowable by checking the recovered session's own profile role.
 import { useEffect, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
 import { RequirementRow } from '../components/core/RequirementRow/RequirementRow.jsx';
@@ -38,6 +37,15 @@ export function ResetPassword({ nav }) {
 
   const signInScreen = isHr ? 'hr-login' : 'signin';
   const signInLabel = isHr ? 'Sign In to HR Portal' : 'Sign In';
+
+  // Auto-redirect back to Sign In a moment after a successful update —
+  // the confirmation message still shows briefly so the change doesn't
+  // feel like it vanished, but nothing here needs a manual click to leave.
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => nav(signInScreen), 2000);
+    return () => clearTimeout(t);
+  }, [done]);
 
   const passwordChecklist = getPasswordChecklist(password);
   const passwordValid = isPasswordValid(password);
@@ -86,7 +94,6 @@ export function ResetPassword({ nav }) {
           )}
         </div>
       </section>
-      <div style={{ marginTop: 60 }}><Footer nav={nav} /></div>
     </div>
   );
 }

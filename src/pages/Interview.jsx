@@ -817,7 +817,7 @@ export function Interview({ application, profile, nav }) {
   if (!application) {
     return (
       <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
+        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} nav={nav} /></div>
         <section style={{ maxWidth: 1000, margin: '60px auto', padding: '0 20px', textAlign: 'center' }}>
           {backButton}
           <p>No application selected.</p>
@@ -830,7 +830,7 @@ export function Interview({ application, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} nav={nav} /></div>
       <section style={{ maxWidth: 1000, margin: '60px auto', padding: '0 20px' }}>
         {backButton}
         {/* Mirrors MyApplications.jsx's getStepIndex exactly: still on

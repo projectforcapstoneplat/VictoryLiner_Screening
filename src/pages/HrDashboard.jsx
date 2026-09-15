@@ -174,6 +174,17 @@ export function HrDashboard({ nav, profile }) {
   };
 
   const handleStatus = async (job, status) => {
+    // The AI matcher only ever sees the weighted criteria keywords plus
+    // whatever narrative context is here — a job with no description gives
+    // it almost nothing to reason about besides a bare keyword list, which
+    // is exactly what makes a weighted criterion easier to satisfy with a
+    // shallow, unsupported resume claim. Gated on publish specifically (not
+    // on saving a draft), since a draft can legitimately still be a work in
+    // progress.
+    if (status === 'published' && !job.description?.trim()) {
+      window.alert(`"${job.title}" needs a job description before it can be published — the AI match scoring relies on it for real context, not just the weighted keyword list. Edit the posting to add one first.`);
+      return;
+    }
     await setJobStatus(job.id, status);
     reload();
     // Fire-and-forget — scoring every applicant's resume against this one
