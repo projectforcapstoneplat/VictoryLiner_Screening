@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Input } from '../components/core/Input/Input.jsx';
-import { Select } from '../components/core/Select/Select.jsx';
+import { Select, DROPDOWN_ARROW_STYLE } from '../components/core/Select/Select.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { FadeSection, SectionHeader, SECTION_STYLE, GRID_2COL, FIELD_STYLE, SECTION_ICONS } from '../components/forms/ResumeFields/ResumeFields.jsx';
 import { createJob, updateJob } from '../lib/jobs.js';
@@ -25,6 +25,18 @@ const EMPTY = {
 };
 
 const EMPTY_CRITERION = { keyword: '', weight: 3 };
+
+// Mirrors WEIGHT_LABELS in supabase/functions/_shared/weightLabel.ts — that
+// file is what the AI actually reads when scoring against these criteria,
+// this is what HR sees while setting them. Neither side had any defined
+// meaning for "3" vs "4" before; this is the one place both now agree on.
+const WEIGHT_OPTIONS = [
+  { value: 1, label: '1 — Nice to Have' },
+  { value: 2, label: '2 — Helpful' },
+  { value: 3, label: '3 — Important' },
+  { value: 4, label: '4 — Very Important' },
+  { value: 5, label: '5 — Critical / Required' },
+];
 
 const STEP_TITLES = ['Job Details', 'Description & Qualifications', 'Screening Criteria', 'Review & Publish'];
 const LAST_STEP = STEP_TITLES.length - 1;
@@ -71,10 +83,24 @@ function CriteriaEditor({ criteria, onChange, onAdd, onRemove, onSuggest, sugges
       {criteria.map((c, i) => (
         <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', background: 'var(--surface-page)', borderRadius: 4, padding: 'clamp(14px, 4vw, 20px)' }}>
           <div style={{ flex: 1 }}>
-            <Input label="Keyword:" value={c.keyword} onChange={(e) => onChange(i, 'keyword', e.target.value)} placeholder="e.g. Defensive Driving" />
+            <Input label="Criterion:" value={c.keyword} onChange={(e) => onChange(i, 'keyword', e.target.value)} placeholder="e.g. Defensive Driving" />
           </div>
-          <div style={{ width: 100 }}>
-            <Input label="Weight:" type="number" value={c.weight} onChange={(e) => onChange(i, 'weight', e.target.value)} />
+          <div style={{ width: 260, flexShrink: 0 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: 'var(--font-ui)' }}>
+              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>Weight:</span>
+              <select
+                value={c.weight}
+                onChange={(e) => onChange(i, 'weight', Number(e.target.value))}
+                style={{
+                  height: 49, width: '100%', boxSizing: 'border-box', padding: '0 40px 0 18px',
+                  background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)',
+                  border: 'none', borderRadius: 0, fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)',
+                  ...DROPDOWN_ARROW_STYLE,
+                }}
+              >
+                {WEIGHT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+            </label>
           </div>
           {criteria.length > 1 && (
             <Button variant="ghost" size="sm" onClick={() => onRemove(i)}>Remove</Button>
@@ -293,7 +319,7 @@ export function JobPostingForm({ job, profile, nav }) {
                   <SectionHeader
                     icon={SECTION_ICONS.skills}
                     title="Screening Criteria"
-                    hint="Keywords/skills the resume-analysis stage will match applicants against, each weighted by importance (1 = nice to have, 5 = critical). AI can draft a starting list from the description and qualifications you just wrote — review and adjust before saving."
+                    hint="Skills/requirements the AI will semantically evaluate each resume against (not literal keyword matching — equivalent wording counts too), each weighted by importance (1 = Nice to Have, 5 = Critical / Required — see the Weight dropdown for the full scale). AI can draft a starting list from the description and qualifications you just wrote — review and adjust before saving."
                   />
                   <CriteriaEditor
                     criteria={criteria}
@@ -334,7 +360,7 @@ export function JobPostingForm({ job, profile, nav }) {
                       <ReviewRow label="Employment Type" value={form.employment_type} />
                       <ReviewRow label="Open Positions" value={form.open_positions} />
                       <ReviewRow label="Application Deadline" value={form.application_deadline || 'No deadline'} />
-                      <ReviewRow label="Screening Criteria" value={`${criteria.filter((c) => c.keyword.trim()).length} keyword${criteria.filter((c) => c.keyword.trim()).length === 1 ? '' : 's'} set`} />
+                      <ReviewRow label="Screening Criteria" value={`${criteria.filter((c) => c.keyword.trim()).length} criteri${criteria.filter((c) => c.keyword.trim()).length === 1 ? 'on' : 'a'} set`} />
                     </div>
                     <p style={{ fontSize: 'var(--text-xs)', margin: 0, opacity: 0.65 }}>
                       Accommodations and AI-use disclosures are shown on every job posting automatically — no need to write them here.

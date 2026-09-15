@@ -1,7 +1,7 @@
-// Suggests screening criteria (keyword/weight pairs) for a job posting using
-// Gemini, so HR starts from an AI-drafted list and customizes it instead of
-// writing keywords from scratch. Server-side because it holds the Gemini
-// API key — never exposed to the browser.
+// Suggests screening criteria (criterion/weight pairs) for a job posting
+// using Gemini, so HR starts from an AI-drafted list and customizes it
+// instead of writing criteria from scratch. Server-side because it holds
+// the Gemini API key — never exposed to the browser.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
@@ -27,7 +27,10 @@ const CRITERIA_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
-          keyword: { type: 'STRING', description: 'A single skill, qualification, or requirement, 1-4 words.' },
+          keyword: {
+            type: 'STRING',
+            description: 'A specific screening criterion the AI will semantically evaluate a resume against — a short descriptive phrase (e.g. "Defensive Driving Experience", "Valid Professional Driver\'s License"), not a single bare technology/tool name in isolation (e.g. not just "JavaScript" — "Proficient in JavaScript for Front-End Development" instead).',
+          },
           weight: { type: 'INTEGER', description: 'Importance from 1 (nice to have) to 5 (critical requirement).' },
         },
         required: ['keyword', 'weight'],
@@ -38,10 +41,13 @@ const CRITERIA_SCHEMA = {
 };
 
 const SYSTEM_PROMPT =
-  'You extract screening keywords for HR job postings at a bus transportation company. ' +
-  'Given a job title, description, and qualifications, list 5-10 concrete keywords/skills a resume ' +
-  "should be matched against, each weighted 1-5 by how critical it is to the role. Prefer specific " +
-  'terms (e.g. "Defensive Driving", "Professional Driver\'s License") over generic ones (e.g. "hardworking").';
+  'You draft screening criteria for HR job postings at a bus transportation company. These are evaluated by ' +
+  'a separate AI SEMANTICALLY against each applicant\'s resume, not matched as literal keywords — so phrase each ' +
+  'one as a specific, descriptive requirement or quality to judge, not a bare technology/tool name on its own. ' +
+  'Given a job title, description, and qualifications, list 5-10 concrete criteria a resume should be evaluated ' +
+  'against, each weighted 1-5 by how critical it is to the role. Prefer specific, descriptive phrasing (e.g. ' +
+  '"Defensive Driving Experience", "Valid Professional Driver\'s License") over both generic ones (e.g. ' +
+  '"hardworking") and bare single-word terms (e.g. "JavaScript" alone, without saying what about it matters).';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {

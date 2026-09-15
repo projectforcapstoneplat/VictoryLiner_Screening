@@ -316,8 +316,22 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
           40%, 60% { transform: translateX(4px); }
         }
         .terms-shake { animation: terms-shake 0.5s; }
+        /* Safety net for the shortest real screens (a small laptop at
+           ~720px tall) — the form panel is tuned to fit without scrolling
+           on realistic laptop heights (768px+), but on anything shorter it
+           still needs to scroll rather than clip. Styled thin/branded so
+           that residual case reads as a deliberate scroll affordance
+           instead of a bare OS-default scrollbar. */
+        .auth-panel-form {
+          scrollbar-width: thin;
+          scrollbar-color: var(--gray-400) transparent;
+        }
+        .auth-panel-form::-webkit-scrollbar { width: 6px; }
+        .auth-panel-form::-webkit-scrollbar-track { background: transparent; }
+        .auth-panel-form::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 999px; }
+        .auth-panel-form::-webkit-scrollbar-thumb:hover { background: var(--gray-500); }
       `}</style>
-      <div style={{ padding: '14px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '8px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} /></div>
       {/* No footer here, unlike every other page — a login/sign-up screen
           has exactly one job (get the user signed in), and this whole panel
           is sized to fit the viewport without scrolling; a footer would
@@ -325,7 +339,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
           just not having one. This section is the one part that scrolls, if
           it ever has to (a short viewport, or Create Account's longer form
           with the password checklist) — the header above stays put either way. */}
-      <section style={{ maxWidth: 1065, margin: '0 auto', padding: '16px 20px', flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <section style={{ maxWidth: 1065, margin: '0 auto', padding: '0 20px', flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         {job && (
           <div className="fade-in-up" style={{ marginBottom: 30 }}>
             <button
@@ -348,7 +362,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
           className="auth-card fade-in-up"
           style={{
             background: 'var(--surface-card)', borderRadius: 24, boxShadow: 'var(--shadow-card)', overflow: 'hidden',
-            maxWidth: 1000, width: '100%', maxHeight: 'calc(100vh - 140px)', boxSizing: 'border-box', margin: '0 auto', flexShrink: 0,
+            maxWidth: 1000, width: '100%', maxHeight: 'calc(100vh - 96px)', boxSizing: 'border-box', margin: '0 auto', flexShrink: 0,
             display: 'flex', alignItems: 'stretch',
           }}
         >
@@ -385,7 +399,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
           <div
             className="auth-split-form auth-panel-form"
             style={{
-              flex: 1, padding: 'clamp(20px, 4vw, 40px)', display: 'flex', flexDirection: 'column', alignItems: 'center', boxSizing: 'border-box',
+              flex: 1, padding: 'clamp(10px, 2.4vh, 40px) clamp(20px, 4vw, 40px)', display: 'flex', flexDirection: 'column', alignItems: 'center', boxSizing: 'border-box',
               // The card's own maxHeight (see above) means Create Account's
               // longer form can end up taller than the card is allowed to
               // be — this is what actually contains that overflow: scoped
@@ -407,16 +421,16 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                 both modes, no snap. */}
             <div style={{ display: 'grid', width: '100%' }}>
               <div style={{
-                gridRow: 1, gridColumn: 1, width: '100%', maxWidth: 400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16,
+                gridRow: 1, gridColumn: 1, width: '100%', maxWidth: 400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 2vh, 16px)',
                 opacity: mode === 'signin' ? 1 : 0, visibility: mode === 'signin' ? 'visible' : 'hidden', pointerEvents: mode === 'signin' ? 'auto' : 'none',
                 transition: 'opacity 0.25s ease',
               }}>
                 <div style={{ textAlign: 'center' }}>
-                  <span style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--pink-100)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                  <span style={{ width: 28, height: 28, borderRadius: 10, background: 'var(--pink-100)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
                     {LOCK_ICON}
                   </span>
                   <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: 0 }}>Welcome Back</h2>
-                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.65, margin: '6px 0 0' }}>Sign in to continue.</p>
+                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.65, margin: '4px 0 0' }}>Sign in to continue.</p>
                 </div>
 
                 <button
@@ -426,7 +440,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
                     background: '#fff', color: '#3c4043', border: '1px solid var(--border-hairline)', borderRadius: 999,
-                    padding: '11px 16px', fontSize: 'var(--text-sm)', fontWeight: 600, fontFamily: 'inherit',
+                    padding: '9px 16px', fontSize: 'var(--text-sm)', fontWeight: 600, fontFamily: 'inherit',
                     cursor: googleLoading ? 'default' : 'pointer', opacity: googleLoading ? 0.7 : 1, boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                   }}
                 >
@@ -438,7 +452,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                   OR
                   <div style={{ flex: 1, height: 1, background: 'var(--border-hairline)' }} />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }} onKeyDown={handleKeyDown}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 1.5vh, 14px)' }} onKeyDown={handleKeyDown}>
                   <FloatingInput id="signin-email" label="Email Address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
 
                   <div style={{ display: 'flex', background: 'var(--surface-page-alt)', borderRadius: 999, padding: 4, gap: 4 }}>
@@ -447,7 +461,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                         key={value}
                         onClick={() => { setAuthMethod(value); setError(''); }}
                         style={{
-                          flex: 1, border: 'none', borderRadius: 999, padding: '9px 0', cursor: 'pointer', fontFamily: 'inherit',
+                          flex: 1, border: 'none', borderRadius: 999, padding: '7px 0', cursor: 'pointer', fontFamily: 'inherit',
                           fontSize: 'var(--text-xs)', fontWeight: 700, transition: 'background 0.18s ease, color 0.18s ease',
                           background: authMethod === value ? 'var(--surface-card)' : 'transparent',
                           color: authMethod === value ? 'var(--action-primary-bg)' : 'var(--text-primary)',
@@ -498,16 +512,16 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                 </button>
               </div>
               <div style={{
-                gridRow: 1, gridColumn: 1, width: '100%', maxWidth: 480, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14,
+                gridRow: 1, gridColumn: 1, width: '100%', maxWidth: 480, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 1.6vh, 14px)',
                 opacity: mode === 'create' ? 1 : 0, visibility: mode === 'create' ? 'visible' : 'hidden', pointerEvents: mode === 'create' ? 'auto' : 'none',
                 transition: 'opacity 0.25s ease',
               }}>
                 <div style={{ textAlign: 'center' }}>
-                  <span style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--pink-100)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                  <span style={{ width: 28, height: 28, borderRadius: 10, background: 'var(--pink-100)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
                     {USER_PLUS_ICON}
                   </span>
                   <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: 0 }}>Create Your Account</h2>
-                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.65, margin: '6px 0 0' }}>Takes a minute — then we'll match you to open roles.</p>
+                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.65, margin: '4px 0 0' }}>Takes a minute — then we'll match you to open roles.</p>
                 </div>
 
                 {confirmationSent ? (
@@ -524,7 +538,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                     </div>
                     <FloatingInput id="create-verify-password" label="Verify Password" type="password" value={verifyPassword} onChange={(e) => setVerifyPassword(e.target.value)} />
                     {verifyPassword.length > 0 && (
-                      <div style={{ marginTop: -12 }}>
+                      <div style={{ marginTop: -10 }}>
                         <RequirementRow passed={passwordsMatch} label="Passwords match" />
                       </div>
                     )}

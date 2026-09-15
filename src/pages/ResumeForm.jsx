@@ -184,6 +184,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   const [email, setEmail] = useState(profile?.email || '');
   const [phone, setPhone] = useState('');
   const [currentLocation, setCurrentLocation] = useState('');
+  const [age, setAge] = useState('');
   const [workExperience, setWorkExperience] = useState([{ ...EMPTY_EXPERIENCE }]);
   const [educationLevel, setEducationLevel] = useState('');
   const [education, setEducation] = useState([{ ...EMPTY_EDUCATION }]);
@@ -253,6 +254,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
         setEmail(data.email || profile.email || '');
         setPhone(data.phone || '');
         setCurrentLocation(data.current_location || '');
+        setAge(data.age != null ? String(data.age) : '');
         if (data.work_experience?.length) setWorkExperience(data.work_experience);
         setEducationLevel(data.education_level || '');
         if (data.education?.length) setEducation(data.education);
@@ -349,8 +351,21 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
       if (!email.trim()) missing.push('email address');
       if (!phone.trim()) missing.push('phone number');
       if (!currentLocation.trim()) missing.push('current location');
+      if (!String(age).trim()) missing.push('age');
       if (missing.length) return `Please enter your ${missing.join(', ')}.`;
       if (!isPhoneValid(phone)) return 'Please enter a valid PH mobile number, e.g. 0912 345 6789.';
+      if (Number(age) < 18) return 'You must be at least 18 years old to apply.';
+    }
+    if (s === 1) {
+      // Work experience entries are optional overall (same as Education),
+      // but match-resume-to-jobs computes total years of experience from
+      // each entry's startDate — an entry with a company/position but no
+      // start date silently gets skipped from that calculation entirely,
+      // undercounting the applicant's real experience. Same "a started
+      // entry must be finished" rule already applied to Education below.
+      if (workExperience.some((e) => (e.company.trim() || e.position.trim()) && !e.startDate.trim())) {
+        return 'Please add a start date for each work experience entry (or remove the incomplete one) — we use it to calculate your total years of experience.';
+      }
     }
     if (s === 2) {
       if (!educationLevel) return 'Please select your highest educational attainment.';
@@ -379,6 +394,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
       if (!email.trim()) fields.push('email');
       if (!phone.trim() || !isPhoneValid(phone)) fields.push('phone');
       if (!currentLocation.trim()) fields.push('currentLocation');
+      if (!String(age).trim() || Number(age) < 18) fields.push('age');
     }
     if (s === 2 && !educationLevel) fields.push('educationLevel');
     if (s === 3 && skills.length === 0) fields.push('skills');
@@ -395,6 +411,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     email,
     phone,
     current_location: currentLocation.trim() || null,
+    age: age !== '' ? Number(age) : null,
     work_experience: workExperience.filter((e) => e.company || e.position),
     education_level: educationLevel,
     education: education.filter((e) => e.school || e.degree),
@@ -438,7 +455,10 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   // just means "you've actually put something in it," not a blocker.
   const isStepComplete = (i) => {
     if (i === 0 || i === 2 || i === 3) return !validateStep(i);
-    if (i === 1) return workExperience.some((e) => e.company.trim() || e.position.trim());
+    // Still optional to have zero entries at all (leave blank if a fresh
+    // graduate) — but once at least one is started, it also has to pass
+    // validateStep's completeness check (start date present) to count.
+    if (i === 1) return workExperience.some((e) => e.company.trim() || e.position.trim()) && !validateStep(1);
     if (i === 4) return Boolean(licenseType || yearsDriving !== '' || nbiClearance || willingShifting || medicalCertificate);
     if (i === 5) return certifications.some((c) => c.title.trim()) || summary.trim().length > 0;
     return false;
@@ -481,7 +501,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // thing enforcing validateStep's checks) — re-check every required step
     // here too, and jump to the first one that's actually missing something
     // instead of silently saving an incomplete resume.
-    for (const s of [0, 2, 3]) {
+    for (const s of [0, 1, 2, 3]) {
       const stepError = validateStep(s);
       if (stepError) {
         setStep(s);
@@ -581,17 +601,17 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
           background: var(--gray-500);
         }
       `}</style>
-      <div style={{ padding: '30px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} profile={profile} /></div>
-      {/* Padding here is deliberately just 20px on every side, not the much
-          larger top/bottom padding this used to have — the card below now
-          owns all of its own internal spacing (header/middle/footer each
-          pad themselves). Leaving section's old, larger padding in place
-          after adding the card's own maxHeight was exactly the kind of
-          double-counted space that caused it to overflow its actual
-          available room. */}
+      <div style={{ padding: 'clamp(8px, 2vh, 30px) 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} profile={profile} /></div>
+      {/* Padding here is deliberately small and vh-aware, not a flat value —
+          the card below owns all of its own internal spacing (header/middle/
+          footer each pad themselves), so section's own padding is pure
+          double-counted overhead against the card's maxHeight budget. On a
+          short real laptop screen (~768px tall, not just a resized desktop
+          browser window) that overhead was previously enough on its own to
+          force an internal scrollbar that had no business appearing. */}
       <section style={{
         maxWidth: 1065, width: '100%', margin: '0 auto', boxSizing: 'border-box', minHeight: 0,
-        padding: '20px',
+        padding: 'clamp(6px, 1.5vh, 20px) 20px',
         flex: 1, display: 'flex', flexDirection: 'column', justifyContent: showChoice ? 'center' : 'flex-start', overflow: 'hidden',
       }}>
         <FadeSection delay={0.1} style={{ maxWidth: 700, width: '100%', margin: '0 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -602,7 +622,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
               stepper) and footer (Next/Save) both stay fixed in place
               either way, so those are never something you have to scroll to
               reach. */}
-          <div style={{ position: 'relative', background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', borderRadius: 20, maxHeight: 'calc(100vh - 210px)', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden' }}>
+          <div style={{ position: 'relative', background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', borderRadius: 20, maxHeight: 'calc(100vh - 140px)', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden' }}>
             {/* One consistent back control for the whole wizard: on step 0
                 it leaves the wizard entirely (back to the choice screen, if
                 that's where this session actually came from); on every
@@ -640,7 +660,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                 {ARROW_LEFT_ICON}
               </button>
             )}
-            <div style={{ flexShrink: 0, padding: 'clamp(16px, 3vw, 32px) clamp(16px, 5vw, 60px) 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, boxSizing: 'border-box' }}>
+            <div style={{ flexShrink: 0, padding: 'clamp(10px, 2vh, 32px) clamp(16px, 5vw, 60px) 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'clamp(8px, 1.6vh, 16px)', boxSizing: 'border-box' }}>
               <div style={{ textAlign: 'center' }}>
                 <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 8px' }}>
                   {reviewing ? 'Review Your Resume' : isDraft ? 'Continue Your Resume' : editing ? 'Update Your Resume' : 'Build Your Resume'}
@@ -787,11 +807,14 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     <Input label="First Name:" value={firstName} onChange={(e) => setFirstName(e.target.value)} error={invalidFields.has('firstName')} />
                     <Input label="Last Name:" value={lastName} onChange={(e) => setLastName(e.target.value)} error={invalidFields.has('lastName')} />
                     <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={invalidFields.has('email')} />
-                    <Input label="Phone Number:" type="tel" placeholder="0912 345 6789" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} hint="Philippine mobile number — HR will use this to contact you." error={invalidFields.has('phone')} />
+                    <Input label="Phone Number:" type="tel" placeholder="0912 345 6789" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} error={invalidFields.has('phone')} />
                     <Input
                       label="Current Location (City / Province):" value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)}
                       placeholder="e.g. Quezon City" error={invalidFields.has('currentLocation')}
-                      style={{ gridColumn: '1 / -1' }}
+                    />
+                    <Input
+                      label="Age:" type="number" min="18" max="100" value={age} onChange={(e) => setAge(e.target.value)}
+                      error={invalidFields.has('age')}
                     />
                   </div>
                 </FadeSection>
