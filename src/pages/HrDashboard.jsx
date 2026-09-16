@@ -296,11 +296,11 @@ export function HrDashboard({ nav, profile }) {
               </button>
             ))}
           </div>
-          <div style={{ width: 180 }}>
-            <Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} options={categories} placeholder="All Categories" placeholderSelectable />
+          <div style={{ width: 150 }}>
+            <Select variant="pill" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} options={categories} placeholder="All Categories" placeholderSelectable />
           </div>
-          <div style={{ width: 160 }}>
-            <Select value={stationFilter} onChange={(e) => setStationFilter(e.target.value)} options={STATIONS} placeholder="All Stations" placeholderSelectable />
+          <div style={{ width: 130 }}>
+            <Select variant="pill" value={stationFilter} onChange={(e) => setStationFilter(e.target.value)} options={STATIONS} placeholder="All Stations" placeholderSelectable />
           </div>
           <button
             onClick={() => setClosingSoonOnly((v) => !v)}
@@ -311,7 +311,7 @@ export function HrDashboard({ nav, profile }) {
               color: closingSoonOnly ? '#fff' : 'var(--text-primary)',
             }}
           >
-            ⏰ Closing Soon
+            Closing Soon
           </button>
           {(statusFilter !== 'all' || categoryFilter || stationFilter || closingSoonOnly) && (
             <ActionPill
@@ -321,6 +321,9 @@ export function HrDashboard({ nav, profile }) {
               onClick={() => { setStatusFilter('all'); setCategoryFilter(''); setStationFilter(''); setClosingSoonOnly(false); }}
             />
           )}
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.55, marginLeft: 'auto' }}>
+            {filteredJobs.length} posting{filteredJobs.length === 1 ? '' : 's'} shown
+          </span>
         </div>
 
         {loading ? (

@@ -19,6 +19,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
 import { sendEmail } from '../_shared/mailer.ts';
+import { formatWeight } from '../_shared/weightLabel.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
@@ -359,7 +360,7 @@ function computeYearsOfExperience(workExperience: any[]): number | null {
 // deno-lint-ignore no-explicit-any
 function buildJobContext(job: any, criteria: any[]): string {
   const criteriaText = criteria.length
-    ? criteria.map((c) => `- ${c.keyword} (weight ${c.weight}/5)`).join('\n')
+    ? criteria.map((c) => `- ${c.keyword} (weight ${formatWeight(c.weight)})`).join('\n')
     : '(No specific criteria defined — evaluate general fit against the job description and qualifications below.)';
 
   return [

@@ -15,6 +15,7 @@ import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { ActionPill } from '../components/core/ActionPill/ActionPill.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
+import { DROPDOWN_ARROW_STYLE } from '../components/core/Select/Select.jsx';
 import { getScoredApplicants } from '../lib/reports.js';
 import {
   getApplicationById,
@@ -53,8 +54,9 @@ const DECISION_META = {
 };
 
 const SELECT_STYLE = {
-  fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '7px 10px', borderRadius: 8,
+  fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '7px 28px 7px 10px', borderRadius: 8,
   background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
+  ...DROPDOWN_ARROW_STYLE, backgroundPosition: 'right 8px center',
 };
 
 const NUM_INPUT_STYLE = {

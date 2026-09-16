@@ -7,6 +7,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
+import { formatWeight } from '../_shared/weightLabel.ts';
 
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
@@ -237,7 +238,7 @@ function computeYearsOfExperience(workExperience: any[]): number | null {
 // deno-lint-ignore no-explicit-any
 function buildPrompt(job: any, criteria: any[], resumeText: string, application: any): string {
   const criteriaText = criteria.length
-    ? criteria.map((c) => `- ${c.keyword} (weight ${c.weight}/5)`).join('\n')
+    ? criteria.map((c) => `- ${c.keyword} (weight ${formatWeight(c.weight)})`).join('\n')
     : '(No specific criteria defined — evaluate general fit against the job description and qualifications below.)';
 
   const totalYears = computeYearsOfExperience(application.work_experience);

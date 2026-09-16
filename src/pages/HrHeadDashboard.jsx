@@ -11,6 +11,13 @@ import { PipelineBar } from '../components/dashboard/PipelineBar/PipelineBar.jsx
 import { Button } from '../components/core/Button/Button.jsx';
 import { ActionPill } from '../components/core/ActionPill/ActionPill.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
+import { DROPDOWN_ARROW_STYLE } from '../components/core/Select/Select.jsx';
+
+const FILTER_SELECT_STYLE = {
+  fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '6px 26px 6px 10px', borderRadius: 8,
+  background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
+  ...DROPDOWN_ARROW_STYLE, backgroundPosition: 'right 8px center',
+};
 import { getHeadOverview } from '../lib/reports.js';
 import { getScreeningSettings, updateMinResumeMatchPercent, updateInterviewQuestionCount } from '../lib/screeningSettings.js';
 import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
@@ -728,10 +735,7 @@ export function HrHeadDashboard({ nav, profile }) {
                       <select
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
-                        style={{
-                          fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '6px 10px', borderRadius: 8,
-                          background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
-                        }}
+                        style={FILTER_SELECT_STYLE}
                       >
                         <option value="all">All Categories</option>
                         {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
@@ -749,7 +753,7 @@ export function HrHeadDashboard({ nav, profile }) {
                     <select
                       value={rankBy}
                       onChange={(e) => setRankBy(e.target.value)}
-                      style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '6px 10px', borderRadius: 8, background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)' }}
+                      style={FILTER_SELECT_STYLE}
                     >
                       {RANK_BY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
