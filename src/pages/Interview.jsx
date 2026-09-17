@@ -1,12 +1,13 @@
 // Applicant — record video answers to the questions assigned to this
 // application (count is HR Head-configurable, see screening_settings), one
 // at a time, using the browser's camera + mic.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
+import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
-import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview, rerollQuestion } from '../lib/interview.js';
+import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
 import { notifyHrInterviewCompleted } from '../lib/applications.js';
 import { evaluateResponse } from '../lib/interviewEvaluation.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
@@ -121,9 +122,21 @@ function CountdownRing({ secondsLeft, totalSeconds }) {
 
 // Live mic input level, read via Web Audio's AnalyserNode — moves in
 // response to actual sound so an applicant can confirm their mic works
-// before starting, not just that a device is plugged in.
-function MicLevelMeter({ stream }) {
+// before starting, not just that a device is plugged in. `onConfirmed`
+// fires (once) the first time the level actually registers real sound —
+// DeviceCheck latches that instead of re-checking the instantaneous level
+// at the moment "Continue" is clicked, since a silent moment between words
+// shouldn't re-lock a mic that's demonstrably working.
+function MicLevelMeter({ stream, onConfirmed }) {
   const [level, setLevel] = useState(0);
+  // The live bar alone drops back to ~0 the instant you stop talking, which
+  // never actually answers "how loud can my mic get" — only the loudest
+  // instant, mid-sentence, would. This tracks the loudest level seen so far
+  // and never comes back down (until the check re-mounts), shown as both a
+  // number and a marker line on the bar itself, layered over the live level
+  // that keeps moving underneath it.
+  const [peakLevel, setPeakLevel] = useState(0);
+  const confirmedRef = useRef(false);
 
   useEffect(() => {
     const audioTrack = stream?.getAudioTracks()[0];
@@ -139,7 +152,13 @@ function MicLevelMeter({ stream }) {
     const tick = () => {
       analyser.getByteFrequencyData(data);
       const avg = data.reduce((a, b) => a + b, 0) / data.length;
-      setLevel(Math.min(100, Math.round((avg / 160) * 100)));
+      const nextLevel = Math.min(100, Math.round((avg / 160) * 100));
+      setLevel(nextLevel);
+      setPeakLevel((p) => Math.max(p, nextLevel));
+      if (nextLevel > 8 && !confirmedRef.current) {
+        confirmedRef.current = true;
+        onConfirmed?.();
+      }
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -148,17 +167,23 @@ function MicLevelMeter({ stream }) {
       source.disconnect();
       ctx.close();
     };
-  }, [stream]);
+  }, [stream, onConfirmed]);
 
   const good = level > 8;
   return (
     <div>
-      <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 6 }}>Microphone</div>
-      <div style={{ height: 10, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600 }}>Microphone</span>
+        {peakLevel > 0 && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Peak: {peakLevel}%</span>}
+      </div>
+      <div style={{ height: 10, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden', position: 'relative' }}>
         <div style={{ height: '100%', width: `${level}%`, background: good ? '#1a7f37' : 'var(--gray-400)', transition: 'width 0.1s linear' }} />
+        {peakLevel > 0 && (
+          <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${peakLevel}%`, width: 2, background: 'var(--red-700)', transform: 'translateX(-1px)', transition: 'left 0.15s ease-out' }} />
+        )}
       </div>
       <div style={{ fontSize: 'var(--text-xs)', opacity: 0.7, marginTop: 6, color: good ? '#1a7f37' : 'inherit' }}>
-        {good ? 'Mic is picking up sound ✓' : 'Say something out loud — this bar should move'}
+        {confirmedRef.current ? 'Mic is picking up sound ✓' : 'Say something out loud — this bar should move'}
       </div>
     </div>
   );
@@ -166,8 +191,13 @@ function MicLevelMeter({ stream }) {
 
 // Samples the live video frame onto a tiny offscreen canvas and averages
 // perceived luminance — a real reading of whether the applicant is actually
-// visible, not just that a camera is connected.
-function LightingMeter({ videoRef }) {
+// visible, not just that a camera is connected. `onStatusChange` reports
+// live 'ok'/'dark'/'bright' status up to DeviceCheck, which gates
+// "Continue to Questions" on it — unlike the mic check, lighting isn't
+// latched once good, since walking out of frame of the light source is a
+// real, ongoing way to become unreadable again right up to the moment they
+// click through.
+function LightingMeter({ videoRef, onStatusChange }) {
   const [brightness, setBrightness] = useState(null);
 
   useEffect(() => {
@@ -185,13 +215,15 @@ function LightingMeter({ videoRef }) {
         for (let i = 0; i < data.length; i += 4) {
           total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
         }
-        setBrightness(total / (data.length / 4));
+        const avg = total / (data.length / 4);
+        setBrightness(avg);
+        onStatusChange?.(avg >= 55 && avg <= 220);
       }
       raf = requestAnimationFrame(tick);
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [videoRef]);
+  }, [videoRef, onStatusChange]);
 
   let label = 'Checking…';
   let color = 'inherit';
@@ -218,74 +250,86 @@ function LightingMeter({ videoRef }) {
 
 // One-time gate before the question list — confirms camera, mic, and
 // lighting all work before the applicant starts an actual timed answer,
-// instead of finding out mid-question.
-function DeviceCheck({ onContinue }) {
-  const [stream, setStream] = useState(null);
-  const [error, setError] = useState('');
-  const videoRef = useRef(null);
+// instead of finding out mid-question. "Continue" is genuinely disabled
+// until both the lighting and mic checks below actually pass, not just
+// once a camera/mic stream exists — a granted permission proves a device is
+// plugged in, not that HR will be able to see or hear this person.
+//
+// `stream` is owned by Interview (the parent), not this component — it's
+// the same MediaStream that keeps flowing into every question afterward, so
+// "Continue to Questions" doesn't tear anything down and the camera never
+// goes dark or re-prompts for permission between here and Question 1.
+// `videoRef` is likewise the parent's — handed in so Interview can measure
+// this exact element's on-screen position right before it unmounts, which
+// is what lets the first question's camera animate in from wherever this
+// one was instead of just popping into place.
+function DeviceCheck({ stream, error, videoRef, onContinue }) {
+  const [lightingOk, setLightingOk] = useState(false);
+  const [micConfirmed, setMicConfirmed] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((s) => {
-        if (active) setStream(s);
-        else s.getTracks().forEach((t) => t.stop());
-      })
-      .catch(() => setError('Could not access your camera/microphone. Check your browser permissions and try again.'));
-    return () => {
-      active = false;
-    };
-  }, []);
+  const handleLightingStatus = useCallback((ok) => setLightingOk(ok), []);
+  const handleMicConfirmed = useCallback(() => setMicConfirmed(true), []);
 
   useEffect(() => {
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
-  }, [stream]);
+  }, [stream, videoRef]);
 
-  useEffect(() => {
-    return () => stream?.getTracks().forEach((t) => t.stop());
-  }, [stream]);
-
-  const handleContinue = () => {
-    stream?.getTracks().forEach((t) => t.stop());
-    onContinue();
-  };
+  const ready = Boolean(stream) && lightingOk && micConfirmed;
 
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(24px, 5vw, 40px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
-      <div style={{ textAlign: 'center', maxWidth: 480 }}>
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(18px, 3vw, 28px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <div style={{ textAlign: 'center', maxWidth: 420 }}>
         <strong style={{ fontSize: 'var(--text-lg)' }}>Check Your Camera &amp; Mic</strong>
-        <p style={{ margin: '6px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
+        <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
           Before you start, make sure HR can clearly see and hear you. Face a light source and say something out loud to test your mic.
         </p>
       </div>
       {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
       {stream && (
-        <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{ width: '100%', maxWidth: 420, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000' }} />
           <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', textAlign: 'left' }}>
-            <div style={{ flex: 1, minWidth: 180 }}><MicLevelMeter stream={stream} /></div>
-            <div style={{ flex: 1, minWidth: 180 }}><LightingMeter videoRef={videoRef} /></div>
+            <div style={{ flex: 1, minWidth: 180 }}><MicLevelMeter stream={stream} onConfirmed={handleMicConfirmed} /></div>
+            <div style={{ flex: 1, minWidth: 180 }}><LightingMeter videoRef={videoRef} onStatusChange={handleLightingStatus} /></div>
           </div>
         </div>
       )}
-      <Button variant="strong" size="sm" onClick={handleContinue} disabled={!stream}>Continue to Questions</Button>
+      <Button variant="strong" size="sm" onClick={onContinue} disabled={!ready}>Continue to Questions</Button>
+      {stream && !ready && (
+        <p style={{ margin: 0, fontSize: 'var(--text-xs)', opacity: 0.6, textAlign: 'center' }}>
+          {!lightingOk && !micConfirmed
+            ? "Waiting on good lighting and a mic check — say something out loud and face a light source."
+            : !lightingOk
+              ? 'Waiting on lighting to look good — face a light source.'
+              : 'Waiting on your mic — say something out loud.'}
+        </p>
+      )}
     </div>
   );
 }
 
 // locked -> countdown -> recording -> preview -> submitted
-// The question text stays hidden (and no camera is requested) until the
-// applicant clicks Start — so there's no window to read the question and go
-// search for an answer before recording. Once revealed, a 5-second "get
-// ready" countdown auto-starts recording, which auto-stops after 1 minute.
-function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, usedQuestionIds, onSubmitted, onRerolled }) {
+// The question text stays hidden until the applicant clicks Start — so
+// there's no window to read the question and go search for an answer before
+// recording. The camera itself, though, is visible from the moment the
+// device check passes (see `stream`, below) — hiding the *question* is what
+// keeps things fair, not hiding the applicant's own live feed. Once
+// revealed, a 5-second "get ready" countdown auto-starts recording, which
+// auto-stops after 1 minute.
+//
+// `stream` is Interview's shared MediaStream, not something this component
+// requests for itself — the same camera feed carries through every
+// question without stopping and re-prompting for permission each time.
+// `flipFromRect` (question index 0 only) is the on-screen rect the device
+// check's own video occupied the instant before it unmounted — used to
+// animate this question's video in from that exact spot instead of it just
+// appearing already relocated.
+function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, stream, flipFromRect, onSubmitted, onAutoAdvance }) {
   const [mode, setMode] = useState(response.video_path ? 'submitted' : 'locked');
   const [revealed, setRevealed] = useState(!!response.video_path);
-  const [stream, setStream] = useState(null);
   const [recordedBlob, setRecordedBlob] = useState(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [requestingCamera, setRequestingCamera] = useState(false);
   const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
   const [recordSecondsLeft, setRecordSecondsLeft] = useState(RECORD_SECONDS);
   const [taglish, setTaglish] = useState(null);
@@ -293,8 +337,12 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState('');
   const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
-  const [rerolling, setRerolling] = useState(false);
-  const [rerollNotice, setRerollNotice] = useState('');
+  // True only for the brief window while the attempt count is being
+  // persisted server-side, before the countdown/recording UI appears at
+  // all — see the comment on beginCountdown for why this has to happen
+  // first, not after recording's already started.
+  const [startingAttempt, setStartingAttempt] = useState(false);
+  const [showLastAttemptConfirm, setShowLastAttemptConfirm] = useState(false);
   const [recovery, setRecovery] = useState(null);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [transcriptAttempted, setTranscriptAttempted] = useState(false);
@@ -305,17 +353,62 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   const chunksRef = useRef([]);
   const recognitionRef = useRef(null);
 
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
+  // The bug this guards against: the live-preview <video> (below) only
+  // exists in the DOM while mode is locked/countdown/recording — switching
+  // to 'preview' swaps in a completely different <video> element (the
+  // recorded blob's own playback), and switching back (re-record) mounts a
+  // *brand new* live-preview <video> node. A plain `useEffect(..., [stream])`
+  // only re-attaches srcObject when the stream itself changes, which it
+  // never does here — so that fresh node sat there black, with a live
+  // stream flowing but nothing telling this new element to display it,
+  // until something else (like the recording finishing) forced a further
+  // mode change. attachVideo runs as a ref callback instead, which fires on
+  // every mount of this exact node, not just on a dependency change.
+  //
+  // Wrapped in useCallback — a *new* function reference on every render
+  // makes React treat it as a different ref callback each time, which means
+  // detaching (calling it with null) and immediately reattaching, even
+  // though the underlying DOM node hasn't actually changed. This component
+  // re-renders every second (the countdown/recording timers), so an
+  // unmemoized version here was tearing the video's srcObject down and
+  // reattaching it once a second — the "flickering, gone and back fast"
+  // that turned out to be. Memoized on `stream` alone, it now only changes
+  // identity if the stream itself ever does, which it doesn't mid-session.
+  const attachVideo = useCallback((el) => {
+    videoRef.current = el;
+    if (el && stream) el.srcObject = stream;
   }, [stream]);
 
+  // FLIP: on mount, if handed the device check's video rect, immediately
+  // transform this video to exactly overlap it (no transition yet — this
+  // frame should look identical to the one before the handoff), then on the
+  // very next frame remove the transform with a transition on, so the
+  // browser animates from "sitting where the old video was" to "sitting in
+  // its own natural spot" — a real slide, not a fade or a jump cut, without
+  // needing the two video elements to ever be the same DOM node.
   useEffect(() => {
-    return () => {
-      stream?.getTracks().forEach((t) => t.stop());
+    if (!flipFromRect || !videoRef.current) return;
+    const el = videoRef.current;
+    const apply = () => {
+      const newRect = el.getBoundingClientRect();
+      if (!newRect.width || !newRect.height) return;
+      const dx = flipFromRect.left - newRect.left;
+      const dy = flipFromRect.top - newRect.top;
+      const scaleX = flipFromRect.width / newRect.width;
+      const scaleY = flipFromRect.height / newRect.height;
+      el.style.transition = 'none';
+      el.style.transformOrigin = 'top left';
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 0.55s cubic-bezier(0.22, 1, 0.36, 1)';
+          el.style.transform = 'none';
+        });
+      });
     };
-  }, [stream]);
+    apply();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -458,8 +551,9 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
       setRecordedBlob(blob);
       setMode('preview');
-      stream.getTracks().forEach((t) => t.stop());
-      setStream(null);
+      // Deliberately doesn't stop the stream's tracks — it's Interview's
+      // shared camera feed, kept alive for the next question (or a
+      // re-record of this one), not something this take owns exclusively.
       stopSpeechRecognition();
     };
     mediaRecorderRef.current = recorder;
@@ -467,10 +561,6 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     setRecordSecondsLeft(RECORD_SECONDS);
     setMode('recording');
     startSpeechRecognition();
-
-    const nextAttempt = attemptCount + 1;
-    setAttemptCount(nextAttempt);
-    recordAttempt(applicationId, response.question_id, nextAttempt);
   };
 
   const stopRecording = () => {
@@ -503,44 +593,65 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, recordSecondsLeft]);
 
-  const beginCountdown = async () => {
+  // No getUserMedia here anymore — the camera's already live (it's
+  // Interview's shared stream, on screen since the device check), so
+  // starting a question is just revealing the text and running the
+  // countdown, not waiting on a fresh permission grant.
+  //
+  // The attempt count is written here — awaited, before the countdown or
+  // recording ever shows — not inside startRecording after the fact. It
+  // used to be a fire-and-forget call made once recording had already
+  // begun: someone who deliberately cut the session (closed the tab,
+  // killed their connection) quickly enough after clicking Start could
+  // interrupt it before that write ever reached the server, while the
+  // locally-backed-up recovery chunks were saved regardless. On return,
+  // the recovery banner would offer that take back with the server never
+  // having counted it — a real way to get more than MAX_ATTEMPTS genuine
+  // tries. Waiting on the write first closes that window: by the time any
+  // recording (and so any possible interruption of one) can happen, the
+  // attempt is already persisted.
+  const startAttempt = async () => {
     setError('');
-    setRequestingCamera(true);
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setStream(s);
-      setRevealed(true);
-      setReadySecondsLeft(READY_SECONDS);
-      setMode('countdown');
-    } catch {
-      setError('Could not access your camera/microphone. Check your browser permissions and try again.');
+    setStartingAttempt(true);
+    const nextAttempt = attemptCount + 1;
+    const { error: attemptError } = await recordAttempt(applicationId, response.question_id, nextAttempt);
+    setStartingAttempt(false);
+    if (attemptError) {
+      setError('Could not start this attempt — check your connection and try again.');
+      return;
     }
-    setRequestingCamera(false);
+    setAttemptCount(nextAttempt);
+    setRevealed(true);
+    setReadySecondsLeft(READY_SECONDS);
+    setMode('countdown');
   };
 
-  // Hands back a different, not-yet-used question instead of re-asking the
-  // same one — otherwise "re-record" would just be a free chance to prepare
-  // a rehearsed answer for a question the applicant has now already seen
-  // once. Falls back to a plain re-record of the same question only if the
-  // category's bank has nothing left to swap to (see rerollQuestion's own
-  // comment in src/lib/interview.js).
-  const reRecord = async () => {
-    if (attemptCount >= MAX_ATTEMPTS) return;
-    setRerolling(true);
-    setError('');
-    setRerollNotice('');
-    const { data, error: rerollErr } = await rerollQuestion(applicationId, response.question_id, jobCategory, usedQuestionIds);
-    setRerolling(false);
-    if (rerollErr) {
-      if (rerollErr.code === 'no_spare_questions') {
-        setRerollNotice("No other questions available yet — you'll re-record this same one.");
-      } else {
-        setError(rerollErr.message || 'Could not load a new question. Please try again.');
-        return;
-      }
-    } else {
-      onRerolled(data);
+  // One warning, right before the take that will actually use up the last
+  // attempt — not at submit time (too late to back out of anything by
+  // then) and not on every attempt (only this one is irreversible). This
+  // take also submits and advances automatically once recorded (see the
+  // auto-submit effect below) — there's no re-record option left to decide
+  // between afterward, so nothing is gained by making them click Submit
+  // manually too. Shown via ConfirmModal, not window.confirm — the native
+  // dialog renders as bare, unstyled browser/OS chrome with no way to brand
+  // it, in any environment, not just locally.
+  const beginCountdown = () => {
+    if (!stream) {
+      setError('Camera/microphone access was lost. Please refresh and try again.');
+      return;
     }
+    if (attemptCount >= MAX_ATTEMPTS) return;
+    if (attemptCount === MAX_ATTEMPTS - 1) {
+      setShowLastAttemptConfirm(true);
+      return;
+    }
+    startAttempt();
+  };
+
+  // Re-records this same question — no swap to a different one anymore.
+  const reRecord = () => {
+    if (attemptCount >= MAX_ATTEMPTS) return;
+    setError('');
     setRecordedBlob(null);
     setTaglish(null);
     setShowTaglish(false);
@@ -549,15 +660,11 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     beginCountdown();
   };
 
+  // Returns whether the upload actually succeeded — the auto-submit effect
+  // below needs to know that before it's safe to advance to the next
+  // question; advancing away from a *failed* final-attempt upload would
+  // abandon it with nothing saved and no way back.
   const submit = async () => {
-    // Final attempt — once this uploads, neither re-record nor reroll is
-    // offered again for this question (see atAttemptLimit below), so this
-    // is the applicant's last chance to back out and re-watch their take
-    // before it's locked in.
-    if (attemptCount >= MAX_ATTEMPTS) {
-      const proceed = window.confirm("This is your last attempt for this question — once submitted, you won't be able to re-record or try a different question here. Submit this answer as final?");
-      if (!proceed) return;
-    }
     setUploading(true);
     setError('');
     const { data, error: uploadError } = await uploadResponseVideo({
@@ -569,7 +676,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     setUploading(false);
     if (uploadError) {
       setError(uploadError.message || 'Upload failed. Check your connection and try again.');
-      return;
+      return false;
     }
     clearRecoveryChunks(applicationId, response.question_id);
     setMode('submitted');
@@ -581,7 +688,27 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     // own on-open evaluation later (see loadDetail in HrApplicantsList.jsx),
     // same as it always has.
     evaluateResponse(data.id);
+    return true;
   };
+
+  // The final attempt (warned about up front in beginCountdown) submits and
+  // advances on its own — there's no re-record choice left to make once
+  // it's recorded, so requiring a manual "Submit Answer" click here would
+  // just be an extra tap with no real decision behind it. A short pause
+  // first still lets the applicant actually see their own preview land
+  // before it's gone, rather than yanking them straight to the next
+  // question the instant recording stops. Doesn't advance at all if the
+  // upload itself failed — that leaves the normal manual "Submit Answer"
+  // button available instead (still rendered below), so a bad connection
+  // doesn't strand the take with no way to retry.
+  useEffect(() => {
+    if (mode !== 'preview' || attemptCount < MAX_ATTEMPTS || !recordedBlob) return;
+    const t = setTimeout(() => {
+      submit().then((ok) => { if (ok) onAutoAdvance?.(); });
+    }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, attemptCount, recordedBlob]);
 
   const resumeRecovery = () => {
     const blob = new Blob(recovery.chunks, { type: 'video/webm' });
@@ -622,19 +749,22 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   const atAttemptLimit = attemptCount >= MAX_ATTEMPTS;
 
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px 28px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
-        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>
-          Question {index + 1} of {total}{revealed && ` — Attempt ${Math.min(attemptCount, MAX_ATTEMPTS)} of ${MAX_ATTEMPTS}`}
+    <>
+      <ConfirmModal
+        open={showLastAttemptConfirm}
+        title="Last Attempt"
+        message={`This is your last attempt for this question (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}) — once you record it, it submits automatically and you move on to the next question.`}
+        confirmLabel="Start Recording"
+        cancelLabel="Not Yet"
+        onConfirm={() => { setShowLastAttemptConfirm(false); startAttempt(); }}
+        onCancel={() => setShowLastAttemptConfirm(false)}
+      />
+      <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '16px 24px' }}>
+        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginBottom: 12 }}>
+          Question {index + 1} of {total}
         </div>
-        {revealed && (
-          <Button variant="ghost" size="sm" onClick={handleTranslate} disabled={translating}>
-            {translating ? 'Translating…' : showTaglish ? 'Show Original' : '🌐 Translate to Taglish'}
-          </Button>
-        )}
-      </div>
 
-      {recovery && (
+        {recovery && (
         <div style={{ background: 'var(--pink-100)', borderRadius: 'var(--radius-sm)', padding: '14px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
             We found a recording for this question from before an interruption. Resume it, or discard and start over?
@@ -646,73 +776,64 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
         </div>
       )}
 
-      {!revealed ? (
-        atAttemptLimit && !recovery ? (
-          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
-            You've used all {MAX_ATTEMPTS} attempts for this question without a submitted answer. Contact HR for help.
-          </p>
-        ) : (
-          <>
-            <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0, opacity: 0.6, fontStyle: 'italic' }}>
-              This question stays hidden until you start — that keeps things fair for every applicant.
-            </p>
-            {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
-            <Button variant="strong" size="sm" onClick={beginCountdown} disabled={requestingCamera || !!recovery}>
-              {requestingCamera ? 'Starting Camera…' : 'Start Question'}
-            </Button>
-          </>
-        )
-      ) : (
-        <div className="fade-in-up">
-          <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
-          {translateError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 8 }}>{translateError}</div>}
-          {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
-          {rerollNotice && <div style={{ color: 'var(--text-primary)', opacity: 0.65, fontSize: 'var(--text-xs)', marginBottom: 10 }}>{rerollNotice}</div>}
-
-          {mode === 'submitted' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>✓ Answer submitted</span>
-              {atAttemptLimit ? (
-                <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts for this question.</span>
-              ) : (
-                <Button variant="ghost" size="sm" onClick={reRecord} disabled={rerolling}>{rerolling ? 'Loading New Question…' : `Try a Different Question (${attemptsLeft} left)`}</Button>
-              )}
-            </div>
-          )}
-
-          {(mode === 'countdown' || mode === 'recording') && (
-            <div style={{ maxWidth: 480, margin: '0 auto' }}>
-              <div style={{ position: 'relative' }}>
-                <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000', display: 'block' }} />
-                {mode === 'countdown' && (
-                  <div className="fade-in-up" style={{
-                    position: 'absolute', inset: 0, borderRadius: 8, background: 'rgba(15,10,10,0.55)',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-                  }}>
-                    <CountdownRing secondsLeft={readySecondsLeft} totalSeconds={READY_SECONDS} />
-                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: '#fff' }}>Get ready…</span>
-                  </div>
-                )}
-              </div>
-              {mode === 'recording' && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--red-700)' }}>
-                      <span className="recording-dot-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red-700)' }} />
-                      Recording — {formatTime(recordSecondsLeft)} left
-                    </span>
-                    <Button variant="strong" size="sm" onClick={stopRecording}>■ Stop</Button>
-                  </div>
-                  <div style={{ marginTop: 8, height: 5, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${(recordSecondsLeft / RECORD_SECONDS) * 100}%`, background: 'var(--red-700)', transition: 'width 1s linear' }} />
-                  </div>
+      {/* Camera on the left, question + controls on the right — the video
+          itself (and this two-column shape) stays constant across locked,
+          countdown, recording, and preview; only what's inside each side
+          changes with `mode`. That's what makes the camera read as "already
+          there" the moment a question becomes current, instead of popping
+          in only once Start is clicked. */}
+      <div className="fade-in-up" style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 300px', maxWidth: 420, minWidth: 240 }}>
+          {(mode === 'locked' || mode === 'countdown' || mode === 'recording') && stream && (
+            <div style={{ position: 'relative' }}>
+              <video ref={attachVideo} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000', display: 'block' }} />
+              {mode === 'countdown' && (
+                <div className="fade-in-up" style={{
+                  position: 'absolute', inset: 0, borderRadius: 8, background: 'rgba(15,10,10,0.55)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+                }}>
+                  <CountdownRing secondsLeft={readySecondsLeft} totalSeconds={READY_SECONDS} />
+                  <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: '#fff' }}>Get ready…</span>
                 </div>
+              )}
+              {mode === 'recording' && (
+                <>
+                  {/* Upper-right overlay badge on the video itself, instead
+                      of plain text below it — a recording timer that's easy
+                      to skim past under everything else isn't much of a
+                      timer; this is the same corner every real video-call
+                      app puts one. */}
+                  <div style={{
+                    position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 6,
+                    background: 'rgba(15,10,10,0.65)', color: '#fff', padding: '6px 12px', borderRadius: 999,
+                    fontSize: 'var(--text-sm)', fontWeight: 700,
+                  }}>
+                    <span className="recording-dot-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red-700)' }} />
+                    {formatTime(recordSecondsLeft)}
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <Button variant="strong" size="sm" onClick={stopRecording}>■ Stop</Button>
+                    </div>
+                    <div style={{ marginTop: 8, height: 5, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(recordSecondsLeft / RECORD_SECONDS) * 100}%`, background: 'var(--red-700)', transition: 'width 1s linear' }} />
+                    </div>
+                    {/* Same live level meter as the device check, now visible
+                        while actually answering — so a mic that drifts quiet
+                        partway through a take is something the applicant can
+                        actually see happening, not just find out about after
+                        HR reviews it. */}
+                    <div style={{ marginTop: 12 }}>
+                      <MicLevelMeter stream={stream} />
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           )}
 
           {mode === 'preview' && recordedBlob && (
-            <div style={{ maxWidth: 480, margin: '0 auto' }}>
+            <div>
               <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
               {transcriptAttempted && (
                 <div style={{ marginTop: 10, background: 'var(--surface-page-alt)', borderRadius: 8, padding: '12px 14px' }}>
@@ -726,19 +847,74 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
                   )}
                 </div>
               )}
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
-                {atAttemptLimit ? (
-                  <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts — this take is final.</span>
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={reRecord} disabled={uploading || rerolling}>{rerolling ? 'Loading New Question…' : `Try a Different Question (${attemptsLeft} left)`}</Button>
-                )}
-              </div>
+            </div>
+          )}
+
+          {mode === 'submitted' && (
+            <div style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 8, background: 'var(--surface-page-alt)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--text-sm)', color: 'var(--red-700)', fontWeight: 700 }}>
+              ✓ Answer submitted
             </div>
           )}
         </div>
-      )}
-    </div>
+
+        <div style={{ flex: '1 1 280px', minWidth: 240 }}>
+          {!revealed ? (
+            atAttemptLimit && !recovery ? (
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
+                You've used all {MAX_ATTEMPTS} attempts for this question without a submitted answer. Contact HR for help.
+              </p>
+            ) : (
+              <>
+                <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0, opacity: 0.6, fontStyle: 'italic' }}>
+                  This question stays hidden until you start — that keeps things fair for every applicant.
+                </p>
+                {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
+                <Button variant="strong" size="sm" onClick={beginCountdown} disabled={!stream || !!recovery || startingAttempt}>
+                  {startingAttempt ? 'Starting…' : 'Start Question'}
+                </Button>
+              </>
+            )
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+                <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Attempt {Math.min(attemptCount, MAX_ATTEMPTS)} of {MAX_ATTEMPTS}</span>
+                <Button variant="ghost" size="sm" onClick={handleTranslate} disabled={translating}>
+                  {translating ? 'Translating…' : showTaglish ? 'Show Original' : '🌐 Translate to Taglish'}
+                </Button>
+              </div>
+              <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
+              {translateError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 8 }}>{translateError}</div>}
+              {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
+
+              {mode === 'submitted' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)', fontWeight: 700 }}>✓ Submitted</span>
+                  {atAttemptLimit ? (
+                    <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts for this question.</span>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={reRecord}>Re-record ({attemptsLeft} left)</Button>
+                  )}
+                </div>
+              )}
+
+              {mode === 'preview' && recordedBlob && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
+                  {atAttemptLimit ? (
+                    <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>
+                      {uploading ? 'Submitting your final attempt…' : `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}) — submitting automatically and moving on…`}
+                    </span>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      </div>
+    </>
   );
 }
 
@@ -768,6 +944,61 @@ export function Interview({ application, profile, nav }) {
   const [loadError, setLoadError] = useState('');
   const [instructionsAcknowledged, setInstructionsAcknowledged] = useState(false);
   const [deviceCheckPassed, setDeviceCheckPassed] = useState(false);
+  // One question shown at a time instead of the whole list at once — starts
+  // on whichever question isn't submitted yet, not always question 1, so
+  // resuming later (or after a reroll elsewhere) lands somewhere useful
+  // instead of back at the beginning every time.
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const indexInitialized = useRef(false);
+
+  // Owned here, not by DeviceCheck or AnswerRecorder — one camera/mic
+  // permission grant for the whole interview, requested once and kept alive
+  // through every question, instead of each screen asking again and the
+  // feed going dark in between.
+  const [stream, setStream] = useState(null);
+  const [streamError, setStreamError] = useState('');
+  const deviceCheckVideoRef = useRef(null);
+  // The device check video's on-screen rect, captured the instant before it
+  // unmounts — handed to Question 1's AnswerRecorder so its own video can
+  // animate in from there (see the FLIP effect on AnswerRecorder) instead of
+  // just appearing already relocated.
+  const flipRectRef = useRef(null);
+
+  useEffect(() => {
+    if (!instructionsAcknowledged) return;
+    let active = true;
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then((s) => {
+        if (active) setStream(s);
+        else s.getTracks().forEach((t) => t.stop());
+      })
+      .catch(() => setStreamError('Could not access your camera/microphone. Check your browser permissions and try again.'));
+    return () => {
+      active = false;
+    };
+  }, [instructionsAcknowledged]);
+
+  // Only torn down when the interview session itself ends (component
+  // unmounts, e.g. navigating back to My Applications) — not between
+  // questions, not on a re-record, which is the entire point of sharing it.
+  useEffect(() => {
+    return () => stream?.getTracks().forEach((t) => t.stop());
+  }, [stream]);
+
+  const handleDeviceCheckPassed = () => {
+    flipRectRef.current = deviceCheckVideoRef.current?.getBoundingClientRect() || null;
+    setDeviceCheckPassed(true);
+  };
+
+  // Consumed by Question 1's AnswerRecorder the moment it mounts (it reads
+  // the prop value, not this ref, so clearing it here doesn't affect that) —
+  // cleared right after so navigating back to question 1 later (Previous,
+  // or clicking its dot) doesn't replay the same handoff animation from a
+  // now-stale device-check position.
+  useEffect(() => {
+    if (!deviceCheckPassed) return;
+    flipRectRef.current = null;
+  }, [deviceCheckPassed]);
 
   useEffect(() => {
     if (!application?.id) return;
@@ -785,6 +1016,13 @@ export function Interview({ application, profile, nav }) {
     });
   }, [application]);
 
+  useEffect(() => {
+    if (indexInitialized.current || !responses) return;
+    indexInitialized.current = true;
+    const firstUnsubmitted = responses.findIndex((r) => !r.video_path);
+    setCurrentIndex(firstUnsubmitted === -1 ? 0 : firstUnsubmitted);
+  }, [responses]);
+
   const handleSubmitted = (updated) => {
     setResponses((rs) => {
       const next = rs.map((r) => (r.question_id === updated.question_id ? updated : r));
@@ -793,19 +1031,12 @@ export function Interview({ application, profile, nav }) {
     });
   };
 
-  // Matched by the response row's own stable id, not question_id — that's
-  // exactly the field a reroll changes, so matching on it here would never
-  // find the row to replace.
-  const handleRerolled = (updated) => {
-    setResponses((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
-  };
-
   const backButton = (
     <button
       onClick={() => nav('my-applications')}
       className="btn-animate"
       style={{
-        display: 'flex', alignItems: 'center', gap: 7, width: 'fit-content', margin: '0 auto 20px',
+        display: 'flex', alignItems: 'center', gap: 7, width: 'fit-content', margin: '0 auto 12px',
         padding: '9px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
         background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', fontWeight: 700,
       }}
@@ -830,8 +1061,8 @@ export function Interview({ application, profile, nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header links={[]} nav={nav} /></div>
-      <section style={{ maxWidth: 1000, margin: '60px auto', padding: '0 20px' }}>
+      <div style={{ padding: '16px 60px 0' }} className="page-header-wrap"><Header links={[]} nav={nav} /></div>
+      <section style={{ maxWidth: 1000, margin: '20px auto', padding: '0 20px' }}>
         {backButton}
         {/* Mirrors MyApplications.jsx's getStepIndex exactly: still on
             "Video Screening" (index 2) until every question actually has a
@@ -839,10 +1070,10 @@ export function Interview({ application, profile, nav }) {
             allSubmitted — this page had been hardcoded to 3 for the whole
             duration, showing "Reviewing" as already current before the
             applicant had recorded a single answer. */}
-        <div style={{ marginBottom: 40, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={allSubmitted ? 3 : 2} /></div>
-        <div style={{ textAlign: 'center', marginBottom: 30 }}>
-          <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>Video Interview — {application.job_postings?.title}</h1>
-          <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0 }}>Take your time — everything you need to know is on the next screen.</p>
+        <div style={{ marginBottom: 16, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={allSubmitted ? 3 : 2} /></div>
+        <div style={{ textAlign: 'center', marginBottom: 14 }}>
+          <h1 style={{ fontWeight: 600, fontSize: 'var(--text-2xl)', margin: '0 0 4px' }}>Video Interview — {application.job_postings?.title}</h1>
+          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.7, margin: 0 }}>Take your time — everything you need to know is on the next screen.</p>
         </div>
 
         {loadError && <p style={{ color: 'var(--red-700)' }}>{loadError}</p>}
@@ -851,28 +1082,74 @@ export function Interview({ application, profile, nav }) {
           <p style={{ textAlign: 'center' }}>Loading your questions…</p>
         ) : responses.length === 0 ? (
           <p style={{ textAlign: 'center' }}>Interview questions haven't been set up for this role's category yet — check back later.</p>
-        ) : !allSubmitted && !instructionsAcknowledged ? (
+        ) : allSubmitted ? (
+          <InterviewComplete nav={nav} />
+        ) : !instructionsAcknowledged ? (
           <Reveal><InterviewInstructions onContinue={() => setInstructionsAcknowledged(true)} /></Reveal>
-        ) : !allSubmitted && !deviceCheckPassed ? (
-          <Reveal><DeviceCheck onContinue={() => setDeviceCheckPassed(true)} /></Reveal>
+        ) : !deviceCheckPassed ? (
+          <Reveal><DeviceCheck stream={stream} error={streamError} videoRef={deviceCheckVideoRef} onContinue={handleDeviceCheckPassed} /></Reveal>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {responses.map((r, i) => (
-              <Reveal key={r.id} delay={Math.min(i * 0.08, 0.32)}>
-                <AnswerRecorder
-                  response={r}
-                  index={i}
-                  total={responses.length}
-                  applicantId={profile.id}
-                  applicationId={application.id}
-                  jobCategory={application.job_postings?.category || ''}
-                  usedQuestionIds={responses.map((row) => row.question_id)}
-                  onSubmitted={handleSubmitted}
-                  onRerolled={handleRerolled}
-                />
-              </Reveal>
-            ))}
-            {allSubmitted && <InterviewComplete nav={nav} />}
+          // One question on screen at a time — not the whole list — with a
+          // clickable dot per question above it: filled/checked once
+          // submitted, the current one outlined, anything further ahead
+          // disabled so there's no skipping to a question out of order.
+          // "Next Question" itself doesn't even appear until the one on
+          // screen right now actually has a submitted answer, same reasoning
+          // (not just disabled beforehand — genuinely not there yet).
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {responses.map((r, i) => {
+                const submitted = !!r.video_path;
+                const isCurrent = i === currentIndex;
+                const reachable = submitted || i <= currentIndex;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => reachable && setCurrentIndex(i)}
+                    disabled={!reachable}
+                    aria-label={`Question ${i + 1}${submitted ? ' — submitted' : isCurrent ? ' — current' : ' — not yet reached'}`}
+                    className="btn-animate"
+                    style={{
+                      width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+                      border: isCurrent ? '2px solid var(--action-primary-bg)' : 'none',
+                      background: submitted ? 'var(--action-primary-bg)' : 'var(--surface-card)',
+                      boxShadow: submitted ? 'none' : 'var(--shadow-hairline)',
+                      color: submitted ? '#fff' : 'var(--text-primary)',
+                      fontSize: 'var(--text-xs)', fontWeight: 700, fontFamily: 'inherit',
+                      cursor: reachable ? 'pointer' : 'default', opacity: reachable ? 1 : 0.4,
+                    }}
+                  >
+                    {submitted ? '✓' : i + 1}
+                  </button>
+                );
+              })}
+            </div>
+
+            <Reveal key={responses[currentIndex].id}>
+              <AnswerRecorder
+                response={responses[currentIndex]}
+                index={currentIndex}
+                total={responses.length}
+                applicantId={profile.id}
+                applicationId={application.id}
+                jobCategory={application.job_postings?.category || ''}
+                stream={stream}
+                flipFromRect={currentIndex === 0 ? flipRectRef.current : null}
+                onSubmitted={handleSubmitted}
+                onAutoAdvance={() => setCurrentIndex((i) => Math.min(responses.length - 1, i + 1))}
+              />
+            </Reveal>
+
+            {currentIndex < responses.length - 1 && responses[currentIndex].video_path && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  variant="strong" size="sm"
+                  onClick={() => setCurrentIndex((i) => Math.min(responses.length - 1, i + 1))}
+                >
+                  Next Question →
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </section>

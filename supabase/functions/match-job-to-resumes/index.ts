@@ -172,19 +172,24 @@ Deno.serve(async (req) => {
       return json({ error: resumesError.message }, 500);
     }
 
-    // Anyone HR has already scheduled a personal interview for (on any of
-    // their applications) is deep in an active hiring process already —
-    // scoring them against a freshly published, unrelated job and emailing
-    // them "a new opening matches you" would just be noise, and spends AI
-    // quota nobody's going to act on. Excluded before the alreadyScored
-    // check runs, not just skipped at notify time, so they never even get a
-    // resume_job_matches row written for a job they're not going to see.
-    const { data: scheduledApps } = await adminClient
+    // Anyone HR has already scheduled a personal interview for, anyone
+    // already accepted (status='advanced'), or anyone actively mid-way
+    // through a video screening (status='interview_stage') — on any of
+    // their applications — is deep in an active hiring process already.
+    // Scoring them against a freshly published, unrelated job and emailing
+    // them "a new opening matches you" would just be noise at best, and at
+    // worst an invitation to abandon an in-progress screening for a
+    // different role — quick-apply's own status check blocks them from
+    // actually acting on it anyway, so notifying is pure noise. Excluded
+    // before the alreadyScored check runs, not just skipped at notify time,
+    // so they never even get a resume_job_matches row written for a job
+    // they're not going to see.
+    const { data: blockedApps } = await adminClient
       .from('applications')
       .select('applicant_id')
-      .not('scheduled_interview_at', 'is', null);
-    const scheduledApplicantIds = new Set((scheduledApps ?? []).map((a) => a.applicant_id));
-    const eligibleResumes = (resumes ?? []).filter((r) => !scheduledApplicantIds.has(r.applicant_id));
+      .or('scheduled_interview_at.not.is.null,status.eq.interview_stage,status.eq.advanced');
+    const blockedApplicantIds = new Set((blockedApps ?? []).map((a) => a.applicant_id));
+    const eligibleResumes = (resumes ?? []).filter((r) => !blockedApplicantIds.has(r.applicant_id));
 
     const { data: existing } = await adminClient
       .from('resume_job_matches')
@@ -192,7 +197,7 @@ Deno.serve(async (req) => {
       .eq('job_id', jobId);
     const alreadyScored = new Set((existing ?? []).map((m) => m.applicant_id));
     const unscored = eligibleResumes.filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
-    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedScheduled=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
+    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedActive=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;

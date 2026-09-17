@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from './lib/supabaseClient.js';
-import { getProfile, signOut } from './lib/auth.js';
+import { getProfileWithRetry, signOut } from './lib/auth.js';
 import { getJob } from './lib/jobs.js';
 import { getMyResume } from './lib/applicantResume.js';
 import { LoadingScreen } from './components/feedback/LoadingScreen/LoadingScreen.jsx';
@@ -96,6 +96,18 @@ export function App() {
   const [session, setSession] = useState(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [profile, setProfile] = useState(null);
+  // True once a profile fetch for the current session has actually settled
+  // (found one, or confirmed there isn't one) — distinct from `profile`
+  // itself being null, which is ambiguous on its own between "still
+  // loading" and "there's genuinely nothing there." Every screen below
+  // that gates on `!profile` was written assuming the only reason profile
+  // could be null with a session present is a brief loading gap — this is
+  // what lets the ghost-session effect further down tell that gap apart
+  // from a session whose user no longer exists at all (e.g. deleted
+  // directly in Supabase while still signed in elsewhere), which otherwise
+  // left every one of those screens spinning on <LoadingScreen /> forever
+  // with no way out.
+  const [profileChecked, setProfileChecked] = useState(false);
   const [scrollTarget, setScrollTarget] = useState(null);
   // Set only via nav(screen, job, { stageFilter }) — lets a pipeline stage
   // (PipelineBar.jsx) jump straight to that job's Applicants page already
@@ -119,10 +131,20 @@ export function App() {
   // silently overridden.
   const hasNavigatedRef = useRef(false);
 
+  // Captures the screen+job being LEFT, right before every nav() call
+  // switches to a new one — lets a page with no fixed "parent" (Contact Us,
+  // reachable from Sign In, Homepage, HR pages, anywhere the shared Header
+  // appears) offer a real "back" that returns wherever the visitor actually
+  // came from, instead of a hardcoded destination that's wrong most of the
+  // time it's used. Not a full history stack — just one level back, which is
+  // all a single "← Back" button needs.
+  const previousStateRef = useRef({ screen: 'home', job: null });
+
   // Third arg is optional: { scrollTo: 'sectionId' } lets a link on any page
   // (e.g. Header's "About Us") land on the homepage already scrolled to a
   // section, instead of just resetting to the top like every other nav does.
   const nav = (s, j, opts) => {
+    previousStateRef.current = { screen, job };
     hasNavigatedRef.current = true;
     setScreen(s);
     setJob(j ?? null);
@@ -192,9 +214,49 @@ export function App() {
   useEffect(() => {
     if (!session) {
       setProfile(null);
+      setProfileChecked(true);
       return;
     }
-    getProfile(session.user.id).then(({ data }) => setProfile(data));
+    let cancelled = false;
+    setProfileChecked(false);
+    // See getProfileWithRetry (lib/auth.js) — a confirmed-null result below
+    // means "sign this person out" (see the comment on that branch), so it
+    // needs a retried result, not a single fallible attempt, or a real
+    // account hitting a momentary hiccup right after signing in gets
+    // force-signed-out on a false positive.
+    getProfileWithRetry(session.user.id).then(({ data }) => {
+      if (cancelled) return;
+      setProfile(data);
+      setProfileChecked(true);
+      if (data) return;
+      // A session can outlive the account it belongs to — e.g. the user was
+      // deleted directly in Supabase while still signed in on this tab, or
+      // an old session simply persisted past that. The access token itself
+      // can still look "valid" for a while (it's a self-contained JWT, not
+      // re-checked against auth.users on every request), but the retried
+      // fetch above still came back empty — every screen's `if (!profile)
+      // return <LoadingScreen />` guard was written assuming that's only
+      // ever a brief loading gap, so without this, hitting that case for
+      // real would leave the visitor stuck on a spinner that could never
+      // resolve, with no sign-out button or any other way out visible on
+      // it. Signing out here forces a clean return to Sign In instead.
+      //
+      // This used to be a separate effect keyed on `[profileChecked,
+      // session, profile]` — that's wrong: `profileChecked` starts out
+      // `true` (nothing to check yet, before any session exists), and
+      // effects run in declaration order within one commit, so the instant
+      // a real sign-in set a brand-new `session`, this recovery check ran
+      // in that same commit and still saw the *previous* render's stale
+      // `profileChecked=true` alongside the new session and a not-yet-
+      // fetched `profile=null` — a false positive on every single sign-in,
+      // not just genuinely deleted accounts. Deciding this here, inside the
+      // same async callback that already confirmed the fetch is done,
+      // can't observe that kind of cross-render staleness.
+      signOut();
+      setSession(null);
+      nav('signin');
+    });
+    return () => { cancelled = true; };
   }, [session]);
 
   // Reopening the tab (or the site) with an already-valid HR session used to
@@ -255,11 +317,11 @@ export function App() {
   if (!sessionChecked) return <LoadingScreen />;
 
   if (screen === 'filter') return <JobFilter nav={nav} />;
-  if (screen === 'details') return <JobDetails job={job} nav={nav} profile={profile?.role === 'applicant' ? profile : null} />;
+  if (screen === 'details') return <JobDetails job={job} nav={nav} profile={profile?.role === 'applicant' ? profile : null} backTo={previousStateRef.current} />;
   if (screen === 'faq') return <FAQ nav={nav} />;
   if (screen === 'privacy') return <Privacy nav={nav} />;
   if (screen === 'terms') return <Terms nav={nav} />;
-  if (screen === 'contact') return <Contact nav={nav} />;
+  if (screen === 'contact') return <Contact nav={nav} backTo={previousStateRef.current} />;
   if (screen === 'signin') return <SignIn job={job} nav={nav} />;
   if (screen === 'forgot-password') return <ForgotPassword nav={nav} />;
   if (screen === 'hr-forgot-password') return <ForgotPassword nav={nav} variant="hr" />;
@@ -329,7 +391,10 @@ export function App() {
     // the `job` state slot is otherwise unused by this screen, and every
     // other screen that reads it always gets a real job object, so a plain
     // string is an unambiguous signal it's this one case.
-    if (screen === 'interview-questions') return <InterviewQuestions profile={profile} nav={nav} initialCategory={typeof job === 'string' ? job : null} />;
+    if (screen === 'interview-questions') {
+      if (profile.role !== 'hr_head') return <HrDashboard nav={nav} profile={profile} />;
+      return <InterviewQuestions profile={profile} nav={nav} initialCategory={typeof job === 'string' ? job : null} />;
+    }
     if (screen === 'hr-jobs') return <HrDashboard nav={nav} profile={profile} />;
     if (screen === 'hr-accounts') {
       if (profile.role !== 'hr_head') return <HrDashboard nav={nav} profile={profile} />;

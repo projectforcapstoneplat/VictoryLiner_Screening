@@ -186,6 +186,12 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   const [currentLocation, setCurrentLocation] = useState('');
   const [age, setAge] = useState('');
   const [workExperience, setWorkExperience] = useState([{ ...EMPTY_EXPERIENCE }]);
+  // Lets a genuinely fresh graduate get the same "step complete" checkmark
+  // everyone else does — without this, Work Experience could never show
+  // complete for them at all (isStepComplete(1) required at least one real
+  // entry), even though leaving it blank is the *correct*, fully-valid
+  // answer for someone with nothing to put there yet.
+  const [noWorkExperience, setNoWorkExperience] = useState(false);
   const [educationLevel, setEducationLevel] = useState('');
   const [education, setEducation] = useState([{ ...EMPTY_EDUCATION }]);
   const [certifications, setCertifications] = useState([{ ...EMPTY_CERTIFICATION }]);
@@ -256,6 +262,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
         setCurrentLocation(data.current_location || '');
         setAge(data.age != null ? String(data.age) : '');
         if (data.work_experience?.length) setWorkExperience(data.work_experience);
+        setNoWorkExperience(data.no_work_experience ?? false);
         setEducationLevel(data.education_level || '');
         if (data.education?.length) setEducation(data.education);
         if (data.certifications?.length) setCertifications(data.certifications);
@@ -382,6 +389,47 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     return '';
   }
 
+  // Cross-references age against work-experience start dates and education
+  // graduation years — pure arithmetic, no AI involved. Catches the kind of
+  // self-contradicting resume a keyword screen would otherwise take at face
+  // value: someone listing 18 as their age and a job that started 5+ years
+  // ago is claiming to have started working at 13, which isn't ambiguous,
+  // it's a contradiction in their own numbers. Deliberately conservative —
+  // 14 is a floor low enough that it only ever fires on a genuine
+  // impossibility (or a typo'd year), not on a merely unusual-but-real
+  // timeline like someone who worked for years before going back to finish
+  // school, which this does NOT flag since nothing about it is arithmetically
+  // impossible.
+  const MIN_WORKING_OR_GRADUATING_AGE = 14;
+  function checkAgeConsistency() {
+    const ageNum = Number(age);
+    if (!ageNum) return '';
+    const birthYear = new Date().getFullYear() - ageNum;
+
+    for (const e of workExperience) {
+      if (!e.startDate) continue;
+      const startYear = Number(e.startDate.slice(0, 4));
+      if (!startYear) continue;
+      const ageAtStart = startYear - birthYear;
+      if (ageAtStart < MIN_WORKING_OR_GRADUATING_AGE) {
+        return `Your work experience at ${e.company.trim() || 'one of your listed jobs'} starts in ${startYear}, which would make you ${ageAtStart} years old at the time — please double-check your age or that start date.`;
+      }
+    }
+
+    for (const ed of education) {
+      if (!ed.yearGraduated) continue;
+      const match = String(ed.yearGraduated).match(/\d{4}/);
+      if (!match) continue;
+      const gradYear = Number(match[0]);
+      const ageAtGrad = gradYear - birthYear;
+      if (ageAtGrad < MIN_WORKING_OR_GRADUATING_AGE) {
+        return `Your listed graduation year (${gradYear}) for ${ed.school.trim() || 'one of your listed schools'} would make you ${ageAtGrad} years old at the time — please double-check your age or that year.`;
+      }
+    }
+
+    return '';
+  }
+
   // Same checks as validateStep, but naming exactly which field(s) are the
   // problem — validateStep only ever needed a yes/no plus a message before
   // (for the error banner), this is what actually drives the red outline on
@@ -413,6 +461,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     current_location: currentLocation.trim() || null,
     age: age !== '' ? Number(age) : null,
     work_experience: workExperience.filter((e) => e.company || e.position),
+    no_work_experience: noWorkExperience,
     education_level: educationLevel,
     education: education.filter((e) => e.school || e.degree),
     skills,
@@ -458,7 +507,11 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // Still optional to have zero entries at all (leave blank if a fresh
     // graduate) — but once at least one is started, it also has to pass
     // validateStep's completeness check (start date present) to count.
-    if (i === 1) return workExperience.some((e) => e.company.trim() || e.position.trim()) && !validateStep(1);
+    // Real entries win over the checkbox if both are somehow present —
+    // checking "no work experience" doesn't exempt an entry someone
+    // actually started from needing a start date too.
+    const hasRealEntry = workExperience.some((e) => e.company.trim() || e.position.trim());
+    if (i === 1) return hasRealEntry ? !validateStep(1) : noWorkExperience;
     if (i === 4) return Boolean(licenseType || yearsDriving !== '' || nbiClearance || willingShifting || medicalCertificate);
     if (i === 5) return certifications.some((c) => c.title.trim()) || summary.trim().length > 0;
     return false;
@@ -516,6 +569,14 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     const filteredEducation = education.filter((e) => e.school || e.degree);
     if (filteredExperience.length === 0 && filteredEducation.length === 0) {
       setError('Please add at least one work experience or education entry.');
+      return;
+    }
+    const ageError = checkAgeConsistency();
+    if (ageError) {
+      setStep(0);
+      setError(ageError);
+      setInvalidFields(new Set(['age']));
+      window.scrollTo(0, 0);
       return;
     }
     setReviewing(true);
@@ -821,24 +882,30 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
               )}
 
               {step === 1 && (
-                <RepeatableSection
-                  title="Work Experience"
-                  hint="Optional — leave this blank if you're a fresh graduate or don't have work experience yet. Just fill in Education instead."
-                  icon={SECTION_ICONS.experience}
-                  delay={0}
-                  entries={workExperience}
-                  fields={[
-                    { key: 'company', label: 'Company:' },
-                    { key: 'position', label: 'Position:' },
-                    { key: 'startDate', label: 'Start Date:', type: 'date' },
-                    { key: 'endDate', label: 'End Date (leave blank if current):', type: 'date' },
-                    { key: 'description', label: 'Description:', type: 'textarea', placeholder: 'e.g. Drove provincial routes, maintained zero at-fault accidents, assisted passengers with special needs' },
-                  ]}
-                  onChange={updateEntry(setWorkExperience)}
-                  onAdd={addEntry(setWorkExperience, EMPTY_EXPERIENCE)}
-                  onRemove={removeEntry(setWorkExperience)}
-                  addLabel="+ Add Work Experience"
-                />
+                <>
+                  <RepeatableSection
+                    title="Work Experience"
+                    hint="Optional — leave this blank if you're a fresh graduate or don't have work experience yet. Just fill in Education instead."
+                    icon={SECTION_ICONS.experience}
+                    delay={0}
+                    entries={workExperience}
+                    fields={[
+                      { key: 'company', label: 'Company:' },
+                      { key: 'position', label: 'Position:' },
+                      { key: 'startDate', label: 'Start Date:', type: 'date' },
+                      { key: 'endDate', label: 'End Date (leave blank if current):', type: 'date' },
+                      { key: 'description', label: 'Description:', type: 'textarea', placeholder: 'e.g. Drove provincial routes, maintained zero at-fault accidents, assisted passengers with special needs' },
+                    ]}
+                    onChange={updateEntry(setWorkExperience)}
+                    onAdd={addEntry(setWorkExperience, EMPTY_EXPERIENCE)}
+                    onRemove={removeEntry(setWorkExperience)}
+                    addLabel="+ Add Work Experience"
+                  />
+                  <label style={{ display: 'flex', gap: 10, fontSize: 'var(--text-sm)', alignItems: 'center', marginTop: 18 }}>
+                    <input type="checkbox" checked={noWorkExperience} onChange={(e) => setNoWorkExperience(e.target.checked)} />
+                    I'm a fresh graduate / I have no work experience
+                  </label>
+                </>
               )}
 
               {step === 2 && (

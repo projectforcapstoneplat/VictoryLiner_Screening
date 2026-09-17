@@ -12,7 +12,7 @@ import { Button } from '../components/core/Button/Button.jsx';
 import { FloatingInput } from '../components/core/FloatingInput/FloatingInput.jsx';
 import { EmailOtpFields } from '../components/core/EmailOtpFields/EmailOtpFields.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
-import { signInWithPassword, signInWithGoogle, signOut, getProfile } from '../lib/auth.js';
+import { signInWithPassword, signInWithGoogle, signOut, getProfileWithRetry } from '../lib/auth.js';
 import { friendlyAuthError } from '../lib/authErrors.js';
 import heroBase from '../assets/hero-bus-base.jpg';
 
@@ -53,7 +53,12 @@ export function HrLogin({ nav, session, profile }) {
       setError(friendlyAuthError(signInError.message));
       return;
     }
-    const { data: profile } = await getProfile(data.user.id);
+    // Retried, not a single fallible attempt — a real HR account hitting a
+    // momentary hiccup right after signInWithPassword (network blip, or the
+    // fresh access token not having fully propagated to this very next
+    // request yet) would otherwise look identical to "not an HR account"
+    // and get signed straight back out. See getProfileWithRetry (lib/auth.js).
+    const { data: profile } = await getProfileWithRetry(data.user.id);
     setLoading(false);
     if (!profile || (profile.role !== 'hr_personnel' && profile.role !== 'hr_head')) {
       await signOut();
@@ -73,7 +78,7 @@ export function HrLogin({ nav, session, profile }) {
   // verifyOtp (unlike Google) resolves synchronously right here, no
   // redirect involved.
   const handleOtpVerified = async ({ user }) => {
-    const { data: profile } = await getProfile(user.id);
+    const { data: profile } = await getProfileWithRetry(user.id);
     if (!profile || (profile.role !== 'hr_personnel' && profile.role !== 'hr_head')) {
       await signOut();
       setError('This account is not an HR account.');

@@ -76,6 +76,12 @@ const STAGE_LABELS = {
   // surfaced the second one, so anyone still waiting on their first
   // decision never showed up in any "queue" at all.
   pending: 'Awaiting Your Decision',
+  // Mirror reports.js's getPersonnelOverview kpis exactly — these back the
+  // two clickable KPI cards on HrPersonnelDashboard.jsx that don't map onto
+  // any of the stages above, so the count on the card and the list it lands
+  // on always agree.
+  'video-pending': 'Video Interview Pending',
+  'passed-screening': 'Passed Initial Screening',
 };
 
 function scoreFor(candidate, scoreType) {
@@ -92,6 +98,12 @@ function matchesStage(s, stage) {
   if (stage === 'screened') return s.resumeScore != null;
   if (stage === 'interviewed') return s.interviewCompleted;
   if (stage === 'decided') return s.status === 'advanced' || s.status === 'declined';
+  // Same condition as reports.js's `videoPending` KPI: advanced into the
+  // interview stage but hasn't finished recording all 3 answers yet.
+  if (stage === 'video-pending') return s.status === 'interview_stage' && !s.interviewCompleted;
+  // Same condition as reports.js's `passedScreening` KPI: anything past the
+  // very first "just submitted, nobody's looked yet" state.
+  if (stage === 'passed-screening') return s.status !== 'submitted';
   if (stage === 'pending') {
     return (
       (s.status === 'submitted' && s.resumeScore != null)

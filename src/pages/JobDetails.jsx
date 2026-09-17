@@ -11,12 +11,15 @@ import { deadlineInfo } from '../lib/deadline.js';
 import { quickApply } from '../lib/quickApply.js';
 import { getMyMatches } from '../lib/resumeMatches.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
+import { listApplicationsForApplicant } from '../lib/applications.js';
 
 // Standard disclosures shown on every job posting — not something HR writes per job.
 const STATIC_SECTIONS = [
   { h: 'Accommodations', icon: 'accommodations', body: 'Victory Liner is committed to providing an inclusive and accessible recruitment process. Applicants who require reasonable accommodations may request assistance at any stage of the recruitment process.' },
   { h: 'Artificial Intelligence', icon: 'ai', body: 'As part of our recruitment process, we may use artificial intelligence (AI) tools to assist in the screening and/or assessment of job applicants.' },
 ];
+
+const ARROW_LEFT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>;
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'var(--action-primary-bg)', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' };
 
@@ -49,7 +52,7 @@ function SectionCard({ icon, title, body, delay }) {
         <h3 style={{ fontWeight: 700, fontSize: 'var(--text-lg)', margin: 0 }}>{title}</h3>
       </div>
       {isList ? (
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ul style={{ margin: 0, padding: 0, paddingLeft: 42, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {lines.map((line, i) => (
             <li key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', fontSize: 'var(--text-sm)', lineHeight: 1.65, opacity: 0.85 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--action-primary-bg)', flexShrink: 0, marginTop: 8 }} />
@@ -58,7 +61,7 @@ function SectionCard({ icon, title, body, delay }) {
           ))}
         </ul>
       ) : (
-        <p style={{ fontSize: 'var(--text-sm)', lineHeight: 1.7, opacity: 0.85, margin: 0 }}>{body}</p>
+        <p style={{ fontSize: 'var(--text-sm)', lineHeight: 1.7, opacity: 0.85, margin: 0, paddingLeft: 42 }}>{body}</p>
       )}
     </div>
   );
@@ -68,7 +71,26 @@ function SectionCard({ icon, title, body, delay }) {
 // (see .mobile-apply-bar in styles.css) so the two surfaces can never drift
 // out of sync on what state shows what — `compact` just drops the
 // explanatory copy the bottom bar has no room for, keeping only the button.
-function ApplyAction({ canApply, profile, matchState, applying, applyError, onApply, onSignIn, onBackHome, compact }) {
+function ApplyAction({ canApply, profile, matchState, applying, applyError, existingApplication, onApply, onSignIn, onBackHome, onTrackApplication, compact }) {
+  // Checked before everything else, including the deadline — someone who
+  // already has an application on file doesn't need "Applications Closed"
+  // (which reads like a rejection of a new attempt that was never being
+  // made) or a re-apply prompt; the only place their answer is meaningful
+  // is Track Application, so send them straight there instead of routing
+  // them back through "View Job Details -> Apply Now" for a job they've
+  // already applied to.
+  if (existingApplication) {
+    return (
+      <>
+        {!compact && (
+          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.65, margin: 0, lineHeight: 1.5 }}>
+            You've already applied for this role — track its progress and continue your video interview from there.
+          </p>
+        )}
+        <Button variant="primary" size="md" onClick={onTrackApplication}>Go to Track Application</Button>
+      </>
+    );
+  }
   if (!canApply) {
     return <Button variant="primary" size="md" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>Applications Closed</Button>;
   }
@@ -97,14 +119,14 @@ function ApplyAction({ canApply, profile, matchState, applying, applyError, onAp
   }
   // Genuinely doesn't qualify — no meaningful action to pin to a persistent
   // mobile bar, so the compact form renders nothing rather than a floating
-  // "Back to Home" that would look like it's begging you to leave.
+  // "Go Back" that would look like it's begging you to leave.
   if (compact) return null;
   return (
     <>
       <p style={{ fontSize: 'var(--text-xs)', opacity: 0.65, margin: 0, lineHeight: 1.5 }}>
         This role isn't one of your current AI matches yet.
       </p>
-      <Button variant="ghost" size="md" onClick={onBackHome}>Back to Home</Button>
+      <Button variant="ghost" size="md" onClick={onBackHome}>Go Back</Button>
     </>
   );
 }
@@ -118,8 +140,14 @@ function MetaRow({ icon, label }) {
   );
 }
 
-export function JobDetails({ job, nav, profile }) {
+export function JobDetails({ job, nav, profile, backTo }) {
   const j = job || { title: 'Bus Conductor', category: 'Operations' };
+  // Reachable from a handful of very different places (Browse All Roles,
+  // Track Application, Jobs That Match You, the homepage's own job cards) —
+  // `backTo` (App.jsx's previousStateRef, same pattern Contact.jsx uses)
+  // returns to whichever of those actually opened this page, instead of a
+  // single hardcoded destination that's wrong most of the time it's used.
+  const handleBack = () => nav(backTo?.screen || 'home', backTo?.job || null);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState('');
   // Applying only ever happens from a job the AI has actually matched the
@@ -134,6 +162,14 @@ export function JobDetails({ job, nav, profile }) {
   const [matchState, setMatchState] = useState(() =>
     !profile || profile.role !== 'applicant' ? { status: 'ready', qualifies: false } : { status: 'checking', qualifies: false }
   );
+  // Whether this applicant already has an application on file for this
+  // specific job — undefined until checked, then either the existing
+  // application row or null. Gates the whole Apply flow: re-applying to a
+  // job already on record isn't a real path, just an accidental one via
+  // View Job Details, and "View Job Details -> Apply Now" is exactly the
+  // repetitive detour Track Application shouldn't be sending anyone
+  // through in the first place.
+  const [existingApplication, setExistingApplication] = useState(undefined);
   const sections = [
     { h: 'Required Qualifications', icon: 'required', body: j.required_qualifications },
     { h: 'Preferred Qualifications', icon: 'preferred', body: j.preferred_qualifications },
@@ -159,6 +195,21 @@ export function JobDetails({ job, nav, profile }) {
       cancelled = true;
     };
   }, [profile, j.id, j.min_resume_match_percent]);
+
+  useEffect(() => {
+    if (!profile || profile.role !== 'applicant' || !j.id) {
+      setExistingApplication(null);
+      return;
+    }
+    let cancelled = false;
+    listApplicationsForApplicant(profile.id).then(({ data }) => {
+      if (cancelled) return;
+      setExistingApplication((data || []).find((a) => a.job_id === j.id) || null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, j.id]);
 
   // Reuses the AI score already computed for this exact job (JobMatches.jsx)
   // — quickApply() unlocks the interview immediately when it genuinely
@@ -187,8 +238,21 @@ export function JobDetails({ job, nav, profile }) {
       {/* Hero band — gives the page a real visual anchor instead of jumping straight into plain text on a bare background. */}
       <div className="fade-in-up" style={{ marginTop: 40, background: 'linear-gradient(120deg, var(--action-primary-bg), var(--red-700))', padding: '56px 20px' }}>
         <div style={{ maxWidth: 1086, margin: '0 auto' }}>
-          <div style={{ marginBottom: 22, opacity: 0.9 }}>
-            <Breadcrumb items={[{ label: 'Home', onClick: () => nav('home') }, 'Job Details']} />
+          <div style={{ marginBottom: 22, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={handleBack}
+              className="btn-animate"
+              aria-label="Back"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%',
+                border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.18)', color: '#fff', flexShrink: 0,
+              }}
+            >
+              {ARROW_LEFT_ICON}
+            </button>
+            <div style={{ opacity: 0.9 }}>
+              <Breadcrumb items={[{ label: 'Home', onClick: () => nav('home') }, 'Job Details']} />
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
             <span style={{ width: 64, height: 64, borderRadius: 16, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, filter: 'brightness(0) invert(1)' }}>
@@ -243,7 +307,8 @@ export function JobDetails({ job, nav, profile }) {
               </div>
               <ApplyAction
                 canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
-                onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={() => nav('home')}
+                existingApplication={existingApplication}
+                onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={handleBack} onTrackApplication={() => nav('my-applications')}
               />
             </div>
           </div>
@@ -259,7 +324,8 @@ export function JobDetails({ job, nav, profile }) {
       <div className="mobile-apply-bar">
         <ApplyAction
           canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
-          onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={() => nav('home')}
+          existingApplication={existingApplication}
+          onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={handleBack} onTrackApplication={() => nav('my-applications')}
           compact
         />
       </div>

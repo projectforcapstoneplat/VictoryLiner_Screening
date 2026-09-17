@@ -8,6 +8,7 @@ import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { listApplicationsForApplicant } from '../lib/applications.js';
 import { getInterviewCompletionMap } from '../lib/interview.js';
 import { listResumeEvaluationsForApplications } from '../lib/resumeEvaluation.js';
+import { getMyMatches } from '../lib/resumeMatches.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
 
 const STEP_LABELS = ['Create Account', 'Resume', 'Video Screening', 'Reviewing', 'Result'];
@@ -58,22 +59,28 @@ function getStepIndex(application, completion, resumeEvaluation, globalMinPercen
 // src/pages/HrHeadDashboard.jsx's Screening Settings card). Short of either,
 // HR still sees and can decide the application manually, but the applicant
 // can't jump straight to interview.
+// `fg: var(--gray-600)` on `var(--surface-page-alt)` (a very light gray) sat
+// right at the edge of legible — fine for a badge you're scanning for at
+// normal size, easy to lose entirely at text-xs. These "neutral, nothing
+// urgent" statuses keep the same muted background (still meant to read as
+// calmer than the pink/red "needs action now" ones below) but with real
+// contrast, not dim-on-dim.
 function getStatusInfo(application, completion, resumeEvaluation, globalMinPercent) {
   if (application.status === 'declined') {
-    return { label: 'Not Selected', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' };
+    return { label: 'Not Selected', bg: 'var(--surface-page-alt)', fg: 'var(--text-primary)' };
   }
   if (application.status === 'advanced') {
     return { label: 'Advanced to Next Step', bg: '#e3f6e6', fg: '#0ca30c' };
   }
   if (application.status !== 'interview_stage') {
-    return { label: 'Submitted — Awaiting HR Review', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' };
+    return { label: 'Submitted — Awaiting HR Review', bg: 'var(--surface-page-alt)', fg: 'var(--text-primary)' };
   }
   if (!resumeEvaluation) {
-    return { label: 'Screening Your Application', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' };
+    return { label: 'Screening Your Application', bg: 'var(--surface-page-alt)', fg: 'var(--text-primary)' };
   }
   const minPercent = resolveMinPercent(application, globalMinPercent);
   if (resumeEvaluation.score < minPercent) {
-    return { label: 'Below Minimum Resume Match', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' };
+    return { label: 'Below Minimum Resume Match', bg: 'var(--surface-page-alt)', fg: 'var(--text-primary)' };
   }
   // Decision not made yet — still worth letting them revisit the interview
   // (to finish it, or re-record before HR reviews it).
@@ -138,6 +145,18 @@ export function MyApplications({ profile, nav, focusJobId }) {
   const [applications, setApplications] = useState([]);
   const [completionMap, setCompletionMap] = useState({});
   const [resumeEvalMap, setResumeEvalMap] = useState({});
+  // Fallback source for "did this application's resume clear the
+  // threshold" — quick-apply (supabase/functions/quick-apply) decides
+  // whether to auto-advance an application into interview_stage using the
+  // score already sitting in resume_job_matches, then separately tries to
+  // copy that score into resume_evaluations for HR's own display. That copy
+  // is a plain fire-and-forget write with no error handling — if it ever
+  // fails, an applicant can end up genuinely stuck on "Screening Your
+  // Application" forever, since nothing here previously had any other way
+  // to confirm they'd cleared the bar. resume_job_matches is the value
+  // quick-apply's own decision was actually based on, so it's the correct
+  // fallback, not a guess.
+  const [matchScoreMap, setMatchScoreMap] = useState({});
   const [minResumeMatchPercent, setMinResumeMatchPercent] = useState(50);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
@@ -147,6 +166,11 @@ export function MyApplications({ profile, nav, focusJobId }) {
     if (!profile?.id) return;
     getScreeningSettings().then(({ data }) => {
       if (data) setMinResumeMatchPercent(data.min_resume_match_percent);
+    });
+    getMyMatches(profile.id).then(({ data }) => {
+      const map = {};
+      for (const m of data || []) map[m.job_id] = m.score;
+      setMatchScoreMap(map);
     });
     listApplicationsForApplicant(profile.id).then(({ data }) => {
       setApplications(data);
@@ -207,7 +231,14 @@ export function MyApplications({ profile, nav, focusJobId }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {applications.map((a) => {
-              const status = getStatusInfo(a, completionMap[a.id], resumeEvalMap[a.id], minResumeMatchPercent);
+              // Falls back to the resume_job_matches score (see matchScoreMap
+              // above) when resume_evaluations never got written for this
+              // application — same shape (`{ score }`) either way, so
+              // getStatusInfo/getStepIndex don't need to know which source
+              // it came from.
+              const effectiveEval = resumeEvalMap[a.id]
+                || (matchScoreMap[a.job_id] != null ? { score: matchScoreMap[a.job_id] } : null);
+              const status = getStatusInfo(a, completionMap[a.id], effectiveEval, minResumeMatchPercent);
               const deadline = videoScreeningDeadline(a, completionMap[a.id]);
               const expanded = expandedId === a.id;
               return (
@@ -284,7 +315,7 @@ export function MyApplications({ profile, nav, focusJobId }) {
                   </div>
                   {expanded && (
                     <div style={{ marginTop: 34, paddingTop: 10 }} onClick={(e) => e.stopPropagation()}>
-                      <Stepper steps={STEP_LABELS} current={getStepIndex(a, completionMap[a.id], resumeEvalMap[a.id], minResumeMatchPercent)} />
+                      <Stepper steps={STEP_LABELS} current={getStepIndex(a, completionMap[a.id], effectiveEval, minResumeMatchPercent)} />
                     </div>
                   )}
                 </div>
