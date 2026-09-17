@@ -276,7 +276,7 @@ function AccountChip({ profile, onSignOut }) {
 // instead. Without this, a gated screen with no other nav escape (e.g.
 // ResumeForm.jsx, which bounces an incomplete resume straight back to itself)
 // would have no way to sign out at all.
-export function Header({ links, onLogoClick, compact = false, nav, accessory, profile }) {
+export function Header({ links, onLogoClick, compact = false, nav, accessory, profile, wideNav = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef(null);
   const resolvedLinks = links ?? [
@@ -349,7 +349,7 @@ export function Header({ links, onLogoClick, compact = false, nav, accessory, pr
           sitting alone between two equal-width gaps with nothing visually
           tying it to the account controls right next to it. Now they read
           as one "your account" cluster instead of loose scattered icons. */}
-      <nav className="app-header-nav" style={{ display: 'flex', alignItems: 'center', gap: 32, fontFamily: 'var(--font-ui)', fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
+      <nav className={`app-header-nav${wideNav ? ' app-header-nav--wide' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 32, fontFamily: 'var(--font-ui)', fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
         {resolvedLinks.map((l) => <NavLink key={typeof l === 'string' ? l : l.label} l={l} />)}
         <span className="app-header-divider" style={{ width: 1, height: 26, background: 'var(--border-hairline)', flexShrink: 0 }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
@@ -360,7 +360,7 @@ export function Header({ links, onLogoClick, compact = false, nav, accessory, pr
 
       {/* Mobile — theme toggle/account chip stay visible; links collapse
           behind the hamburger instead of wrapping into a cramped grid. */}
-      <div className="app-header-mobile-controls" style={{ display: 'none', alignItems: 'center', gap: 10 }}>
+      <div className={`app-header-mobile-controls${wideNav ? ' app-header-mobile-controls--wide' : ''}`} style={{ display: 'none', alignItems: 'center', gap: 10 }}>
         <ThemeToggle />
         {resolvedAccessory}
         <button

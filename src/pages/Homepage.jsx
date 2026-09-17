@@ -318,6 +318,7 @@ export function Homepage({ nav, profile, scrollTarget }) {
           compact={scrolled}
           nav={nav}
           profile={profile}
+          wideNav
         />
       </div>
 

@@ -102,6 +102,24 @@ export async function getProfile(userId) {
   return { data, error };
 }
 
+// A null profile right after a fresh sign-in is ambiguous: it's what a
+// genuinely missing/deleted account looks like, but it's also what a
+// momentary hiccup looks like — a network blip, or the just-issued access
+// token not having fully propagated to this very next request yet. Callers
+// that treat a null profile as "sign this person out" (App.jsx's ghost-
+// session recovery, HrLogin's role check) need to rule out the transient
+// case first, or a real account hitting that race gets force-signed-out on
+// a false positive moments after successfully logging in. Retrying a
+// couple of times costs at most ~2s, a fine trade for never doing that to
+// a real session.
+export async function getProfileWithRetry(userId, retries = 2, delayMs = 1000) {
+  for (let attempt = 0; ; attempt++) {
+    const result = await getProfile(userId);
+    if (result.data || attempt >= retries) return result;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
 // Sends a password-reset email. Supabase redirects the link back to
 // `redirectTo` with a recovery session already active — App.jsx listens for
 // the PASSWORD_RECOVERY auth event and routes to the "set new password"

@@ -40,6 +40,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_RANGE_PRESETS = [
   { key: 'all', label: 'All Time' },
   { key: 'last-30', label: 'Last 30 Days' },
+  { key: 'last-n', label: 'Last N Days' },
   { key: 'this-month', label: 'This Month' },
   { key: 'last-month', label: 'Last Month' },
   { key: 'this-quarter', label: 'This Quarter' },
@@ -48,11 +49,18 @@ const DATE_RANGE_PRESETS = [
 
 // Every preset resolves to plain 'YYYY-MM-DD' strings (what getHeadOverview
 // and <input type="date"> both expect) — 'all' resolves to {null, null},
-// which getHeadOverview reads as "no filtering, show everything."
-function presetRange(preset) {
+// which getHeadOverview reads as "no filtering, show everything." `days`
+// only matters for 'last-n' — an arbitrary HR-Head-typed day count, for when
+// none of the fixed presets (or picking two exact calendar dates via
+// 'custom') line up with what they actually want.
+function presetRange(preset, days) {
   const now = new Date();
   const toISO = (d) => d.toISOString().slice(0, 10);
   if (preset === 'last-30') return { from: toISO(new Date(now.getTime() - 29 * DAY_MS)), to: toISO(now) };
+  if (preset === 'last-n') {
+    const n = Math.max(1, Number(days) || 1);
+    return { from: toISO(new Date(now.getTime() - (n - 1) * DAY_MS)), to: toISO(now) };
+  }
   if (preset === 'this-month') return { from: toISO(new Date(now.getFullYear(), now.getMonth(), 1)), to: toISO(now) };
   if (preset === 'last-month') {
     return {
@@ -80,7 +88,11 @@ const DATE_INPUT_STYLE = {
   background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)', border: 'none', borderRadius: 6, color: 'var(--text-primary)',
 };
 
-function DateRangeBar({ preset, setPreset, customFrom, setCustomFrom, customTo, setCustomTo, onGenerateReport, reportReady }) {
+function DateRangeBar({
+  preset, setPreset, customFrom, setCustomFrom, customTo, setCustomTo,
+  lastNDays, setLastNDays, categories, reportCategory, setReportCategory,
+  onGenerateReport, reportReady,
+}) {
   return (
     <div className="fade-in-up" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '14px 20px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -105,6 +117,28 @@ function DateRangeBar({ preset, setPreset, customFrom, setCustomFrom, customTo, 
           <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>to</span>
           <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={DATE_INPUT_STYLE} />
         </div>
+      )}
+      {preset === 'last-n' && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Last</span>
+          <input
+            type="number" min={1} max={3650} value={lastNDays}
+            onChange={(e) => setLastNDays(e.target.value)}
+            style={{ ...DATE_INPUT_STYLE, width: 64 }}
+          />
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>days</span>
+        </div>
+      )}
+      {categories.length > 0 && (
+        <select
+          value={reportCategory}
+          onChange={(e) => setReportCategory(e.target.value)}
+          style={FILTER_SELECT_STYLE}
+          aria-label="Job category"
+        >
+          <option value="all">All Categories</option>
+          {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+        </select>
       )}
       <Button variant="strong" size="sm" onClick={onGenerateReport} disabled={!reportReady} style={{ marginLeft: 'auto' }}>
         📄 Generate Report
@@ -467,6 +501,7 @@ function DocTable({ columns, rows }) {
 // data already in hand, not a separate report-building pipeline.
 function HiringReportDocument({ report, onBack }) {
   const { from, to } = report.range;
+  const scopeLabel = `${formatRangeLabel(from, to)} · ${report.category || 'All Categories'}`;
   return (
     <div>
       <style>{`
@@ -481,7 +516,7 @@ function HiringReportDocument({ report, onBack }) {
       <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: '0 0 6px', fontFamily: 'var(--font-display)' }}>Hiring Report</h1>
-          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>{formatRangeLabel(from, to)}</p>
+          <p style={{ margin: 0, fontSize: 'var(--text-sm)', opacity: 0.65 }}>{scopeLabel}</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <Button variant="ghost" size="sm" onClick={onBack}>← Back to Dashboard</Button>
@@ -493,7 +528,7 @@ function HiringReportDocument({ report, onBack }) {
         <div className="report-doc-page" style={{ background: DOC_BG, color: DOC_TEXT, borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 6vw, 56px)', fontFamily: "'Georgia', 'Times New Roman', serif", lineHeight: 1.5 }}>
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: 0.5 }}>Victory Liner Careers</div>
-            <div style={{ fontSize: 15, marginTop: 4 }}>Hiring Report — {formatRangeLabel(from, to)}</div>
+            <div style={{ fontSize: 15, marginTop: 4 }}>Hiring Report — {scopeLabel}</div>
             <div style={{ fontSize: 12, color: DOC_MUTED, marginTop: 4 }}>Generated {new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' })}</div>
           </div>
 
@@ -562,25 +597,29 @@ export function HrHeadDashboard({ nav, profile }) {
   const [rangePreset, setRangePreset] = useState('all');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  const [lastNDays, setLastNDays] = useState(30);
+  const [reportCategory, setReportCategory] = useState('all');
   const [showReport, setShowReport] = useState(false);
 
-  const { from, to } = useMemo(
-    () => (rangePreset === 'custom' ? { from: customFrom || null, to: customTo || null } : presetRange(rangePreset)),
-    [rangePreset, customFrom, customTo],
-  );
+  const { from, to } = useMemo(() => {
+    if (rangePreset === 'custom') return { from: customFrom || null, to: customTo || null };
+    if (rangePreset === 'last-n') return presetRange('last-n', lastNDays);
+    return presetRange(rangePreset);
+  }, [rangePreset, customFrom, customTo, lastNDays]);
 
   useEffect(() => {
-    getHeadOverview({ from, to }).then(({ data, error: err }) => {
+    getHeadOverview({ from, to, category: reportCategory }).then(({ data, error: err }) => {
       if (err) setError(err.message || 'Failed to load reports.');
       else { setReport(data); setError(''); }
     });
-  }, [from, to]);
+  }, [from, to, reportCategory]);
 
-  // Switching the date range while the print view is open would leave it
-  // showing a now-stale snapshot with no visible link to the controls that
-  // changed underneath it — simplest correct behavior is just dropping back
-  // to the live dashboard so the new range is visibly in effect.
-  useEffect(() => { setShowReport(false); }, [from, to]);
+  // Switching the date range or category while the print view is open would
+  // leave it showing a now-stale snapshot with no visible link to the
+  // controls that changed underneath it — simplest correct behavior is just
+  // dropping back to the live dashboard so the new selection is visibly in
+  // effect.
+  useEffect(() => { setShowReport(false); }, [from, to, reportCategory]);
 
   if (showReport && report) {
     return (
@@ -590,9 +629,12 @@ export function HrHeadDashboard({ nav, profile }) {
     );
   }
 
-  const categories = report
-    ? [...new Set(report.topCandidates.map((c) => c.job?.category).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-    : [];
+  // The full, unfiltered category list (not derived from report.topCandidates,
+  // which — now that the report itself can be scoped to one category via the
+  // DateRangeBar above — would otherwise collapse this widget's own,
+  // independent category dropdown down to whatever's currently selected up
+  // there).
+  const categories = report?.allCategories || [];
   const filteredCandidates = report
     ? report.topCandidates
         .filter((c) => categoryFilter === 'all' || c.job?.category === categoryFilter)
@@ -643,6 +685,11 @@ export function HrHeadDashboard({ nav, profile }) {
           setCustomFrom={setCustomFrom}
           customTo={customTo}
           setCustomTo={setCustomTo}
+          lastNDays={lastNDays}
+          setLastNDays={setLastNDays}
+          categories={report?.allCategories || []}
+          reportCategory={reportCategory}
+          setReportCategory={setReportCategory}
           onGenerateReport={() => setShowReport(true)}
           reportReady={Boolean(report)}
         />
@@ -660,7 +707,7 @@ export function HrHeadDashboard({ nav, profile }) {
             </div>
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
-              <SectionCard title="Active in Pipeline" subtitle="Applications still awaiting a final decision" delay={0.01}>
+              <SectionCard title="In Progress Candidates" subtitle="Applications still awaiting a final decision" delay={0.01}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                   <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-6xl)', color: 'var(--action-primary-bg)' }}>
                     {report.decisionOutcomes.pending}
@@ -805,13 +852,16 @@ export function HrHeadDashboard({ nav, profile }) {
               <SectionCard title="Resume Score Distribution" subtitle="How applicants' AI resume scores spread out">
                 <HorizontalBarChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
               </SectionCard>
-              <SectionCard title="Applications by Category" subtitle="Where interest is concentrated" delay={0.06}>
-                <HorizontalBarChart rows={report.categoryBreakdown.map((c) => ({ label: c.category, count: c.count }))} emptyMessage="No applications yet." />
+              <SectionCard title="Interview Score Distribution" subtitle="How applicants' AI interview scores spread out" delay={0.06}>
+                <HorizontalBarChart rows={report.interviewScoreDistribution} emptyMessage="No interviews evaluated yet." />
               </SectionCard>
             </div>
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
-              <SectionCard title="Job Postings by Status" subtitle="Published, draft, and closed">
+              <SectionCard title="Applications by Category" subtitle="Where interest is concentrated">
+                <HorizontalBarChart rows={report.categoryBreakdown.map((c) => ({ label: c.category, count: c.count }))} emptyMessage="No applications yet." />
+              </SectionCard>
+              <SectionCard title="Job Postings by Status" subtitle="Published, draft, and closed" delay={0.06}>
                 <HorizontalBarChart
                   rows={[
                     { label: 'Published', count: report.jobStats.published },
@@ -821,17 +871,18 @@ export function HrHeadDashboard({ nav, profile }) {
                   emptyMessage="No job postings yet."
                 />
               </SectionCard>
-              <SectionCard title="Overall Decision Outcomes" subtitle="Final calls across every application" delay={0.06}>
-                <HorizontalBarChart
-                  rows={[
-                    { label: 'Advanced', count: report.decisionOutcomes.advanced },
-                    { label: 'Declined', count: report.decisionOutcomes.declined },
-                    { label: 'Pending', count: report.decisionOutcomes.pending },
-                  ]}
-                  emptyMessage="No applications yet."
-                />
-              </SectionCard>
             </div>
+
+            <SectionCard title="Overall Decision Outcomes" subtitle="Final calls across every application">
+              <HorizontalBarChart
+                rows={[
+                  { label: 'Advanced', count: report.decisionOutcomes.advanced },
+                  { label: 'Declined', count: report.decisionOutcomes.declined },
+                  { label: 'Pending', count: report.decisionOutcomes.pending },
+                ]}
+                emptyMessage="No applications yet."
+              />
+            </SectionCard>
 
             <SectionCard title="Hiring Progress by Job" subtitle="Applications narrowing through screening, interview, and decision">
               {report.jobBreakdown.length === 0 ? (

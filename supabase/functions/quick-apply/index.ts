@@ -67,6 +67,29 @@ Deno.serve(async (req) => {
       return json({ application: existing });
     }
 
+    // Already accepted somewhere, or actively mid-way through another
+    // role's video screening — either way, opening a second application
+    // isn't a real choice worth offering. Deliberately checked against
+    // every OTHER application (any job_id), not just this one — the
+    // "already applied to this job" check above only ever catches a repeat
+    // of the SAME job. Still fine to have several applications sitting at
+    // plain 'submitted' at once (comparing options is normal); this only
+    // blocks piling on once one of them has actually become real.
+    const { data: activeElsewhere } = await callerClient
+      .from('applications')
+      .select('status, job_postings(title)')
+      .eq('applicant_id', user.id)
+      .in('status', ['interview_stage', 'advanced']);
+    if (activeElsewhere && activeElsewhere.length > 0) {
+      const accepted = activeElsewhere.find((a) => a.status === 'advanced');
+      const inProgress = accepted ?? activeElsewhere[0];
+      const otherTitle = inProgress.job_postings?.title || 'another role';
+      const message = accepted
+        ? `You've already been accepted for ${otherTitle} — new applications are closed while that stands.`
+        : `You're still progressing through the video interview for ${otherTitle} — finish that one before applying elsewhere.`;
+      return json({ error: message }, 409);
+    }
+
     const { data: resume } = await callerClient
       .from('applicant_resumes')
       .select('*')
@@ -158,7 +181,16 @@ Deno.serve(async (req) => {
 
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    await adminClient.from('resume_evaluations').upsert(
+    // Was fire-and-forget with no error check — a silent failure here left
+    // the application genuinely stuck: MyApplications.jsx used to treat "no
+    // resume_evaluations row" as "still screening," forever, with no way for
+    // the applicant to reach their own video interview even though they'd
+    // already been correctly advanced into interview_stage above. Logging
+    // it now at least surfaces a real failure instead of losing it silently
+    // — this copy failing shouldn't fail the whole apply request (the
+    // client already has everything it needs from resume_job_matches as a
+    // fallback, see MyApplications.jsx), so it still isn't awaited-and-thrown.
+    const { error: evalCopyError } = await adminClient.from('resume_evaluations').upsert(
       {
         application_id: newApp.id,
         job_id: jobId,
@@ -170,6 +202,9 @@ Deno.serve(async (req) => {
       },
       { onConflict: 'application_id' },
     );
+    if (evalCopyError) {
+      console.error('quick-apply: failed to copy resume_job_matches into resume_evaluations', evalCopyError);
+    }
 
     const { data: fullApp } = await callerClient
       .from('applications')

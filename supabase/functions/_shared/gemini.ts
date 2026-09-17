@@ -1,15 +1,37 @@
 // Calls the Gemini API, rotating through multiple API keys on quota
-// exhaustion. GEMINI_API_KEY holds one or more comma-separated keys — add
-// more (each from its own Google account/project, since Gemini's free-tier
-// quota is granted per project, not per key) to extend how long a low-volume
-// demo can run before hitting the free tier's daily/per-minute cap.
+// exhaustion. Keys can be supplied two ways, and both are merged into one
+// pool: GEMINI_API_KEY as one comma-separated value, and/or any number of
+// separately-named secrets GEMINI_API_KEY_1, GEMINI_API_KEY_2, ... (no need
+// to edit one long comma-separated string every time a key is added or
+// removed — just add or delete a numbered secret). Add more (each from its
+// own Google account/project, since Gemini's free-tier quota is granted per
+// project, not per key) to extend how long a low-volume demo can run before
+// hitting the free tier's daily/per-minute cap.
 // Only rotates on HTTP 429 (quota exhausted) — any other failure (bad
 // request, safety block, invalid key) would fail identically on every other
 // key, so it returns immediately instead of burning through the whole list.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Exported so list-gemini-keys/index.ts can report the configured key count
+// (and seed the debug panel's status table) without ever calling Gemini's
+// API itself — checking "how many keys do I have" shouldn't cost a real
+// request.
+export function collectGeminiKeys(): string[] {
+  const fromCsv = (Deno.env.get('GEMINI_API_KEY') || '').split(',').map((k) => k.trim()).filter(Boolean);
+  const env = Deno.env.toObject();
+  const fromNumbered = Object.keys(env)
+    .filter((name) => /^GEMINI_API_KEY_\d+$/.test(name))
+    .sort((a, b) => Number(a.slice('GEMINI_API_KEY_'.length)) - Number(b.slice('GEMINI_API_KEY_'.length)))
+    .map((name) => env[name].trim())
+    .filter(Boolean);
+  // De-duplicated by value, not just name -- GEMINI_API_KEY and a numbered
+  // secret could accidentally hold the same key, which would otherwise
+  // waste a rotation slot re-trying a key that's already known to be spent.
+  return Array.from(new Set([...fromCsv, ...fromNumbered]));
+}
+
 export async function callGemini(model: string, payload: unknown): Promise<{ ok: boolean; status: number; body: any }> {
-  const keys = (Deno.env.get('GEMINI_API_KEY') || '').split(',').map((k) => k.trim()).filter(Boolean);
+  const keys = collectGeminiKeys();
   if (keys.length === 0) {
     return { ok: false, status: 500, body: { error: { message: 'GEMINI_API_KEY is not configured.' } } };
   }
@@ -73,7 +95,9 @@ async function fetchWithOverloadRetry(model: string, key: string, payload: unkno
 // real recorded status -- ignoreDuplicates makes this INSERT ... ON CONFLICT
 // DO NOTHING, so a key that already has a status row (ok or rate_limited)
 // keeps it untouched; only a genuinely never-seen key gets a fresh "ok" row.
-async function seedKeyLabels(count: number) {
+// Exported so list-gemini-keys/index.ts can populate the debug panel on its
+// own, independent of any real AI call ever having happened.
+export async function seedKeyLabels(count: number) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) return;

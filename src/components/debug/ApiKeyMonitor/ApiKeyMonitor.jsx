@@ -121,7 +121,13 @@ export function ApiKeyMonitor() {
       setLoadError('');
       setRows((data || []).slice().sort((a, b) => keyNumber(a.key_label) - keyNumber(b.key_label)));
     };
-    load();
+    // Seeds every configured key into the table without ever calling
+    // Gemini's own API — previously the table only got populated as a side
+    // effect of a real AI call, so opening this panel before ever using an
+    // AI feature (or right after adding a new key) showed nothing at all.
+    // Best-effort: if it fails, `load()` right after still shows whatever
+    // was already there from a prior real AI call.
+    supabase.functions.invoke('list-gemini-keys').catch(() => {}).finally(load);
     const pollId = setInterval(load, 4000);
     const tickId = setInterval(() => setNow(Date.now()), 1000);
     return () => {

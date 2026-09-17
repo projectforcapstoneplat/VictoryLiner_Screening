@@ -103,7 +103,11 @@ const NAV_ITEMS = [
   { key: 'hr-decisions', label: 'Decisions', icon: 'checkCircle', roles: ['hr_personnel'] },
   { key: 'hr-jobs', label: 'Job Openings', icon: 'briefcase', roles: ['hr_personnel', 'hr_head'] },
   { key: 'hr-applicant-list', label: 'Applicants', icon: 'applicantList', roles: ['hr_personnel', 'hr_head'] },
-  { key: 'interview-questions', label: 'Interview Questions', icon: 'question', roles: ['hr_personnel', 'hr_head'] },
+  // HR Head only — HR Personnel used to be able to create/edit/store
+  // questions here too, but the question bank is now curated solely by HR
+  // Head (see migration 0038_interview_questions_hr_head_only.sql, which
+  // backs this up at the RLS level, not just by hiding the tab).
+  { key: 'interview-questions', label: 'Interview Questions', icon: 'question', roles: ['hr_head'] },
   { key: 'hr-accounts', label: 'HR Personnel', icon: 'users', roles: ['hr_head'] },
 ];
 
@@ -210,9 +214,13 @@ function useJobDeadlineAlerts() {
 // screening stage at all, which is worse than a looming deadline, so it's
 // worth catching the moment it happens (right after publishing) rather than
 // HR discovering it only when an applicant gets stuck.
-function useMissingQuestionsAlerts() {
+function useMissingQuestionsAlerts(enabled) {
   const [alerts, setAlerts] = useState([]);
   useEffect(() => {
+    if (!enabled) {
+      setAlerts([]);
+      return;
+    }
     let cancelled = false;
     listPublishedJobsMissingQuestions().then(({ data }) => {
       if (cancelled) return;
@@ -221,15 +229,15 @@ function useMissingQuestionsAlerts() {
       })));
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [enabled]);
   return alerts;
 }
 
-function NotificationBell({ notifications, nav }) {
+function NotificationBell({ notifications, nav, isHrHead }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
   const jobAlerts = useJobDeadlineAlerts();
-  const questionAlerts = useMissingQuestionsAlerts();
+  const questionAlerts = useMissingQuestionsAlerts(isHrHead);
   const combined = [...questionAlerts, ...jobAlerts, ...notifications.map((n) => ({ ...n, kind: 'applicant' }))];
   const count = combined.length;
 
@@ -437,7 +445,7 @@ export function HrShell({ active, nav, profile, notifications = [], children }) 
               <SearchBox nav={nav} />
             </span>
             <ChromeThemeToggle />
-            <NotificationBell notifications={notifications} nav={nav} />
+            <NotificationBell notifications={notifications} nav={nav} isHrHead={profile.role === 'hr_head'} />
             <UserMenu profile={profile} nav={nav} />
           </div>
         </header>

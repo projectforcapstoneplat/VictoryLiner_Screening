@@ -1,12 +1,22 @@
 // Contact Us — carries the terminal address + map that used to live on the
 // homepage's "about" section (which is now real About Us content instead),
 // plus the channels an applicant would actually use to reach HR.
+//
+// No footer and no page-level scroll, same reasoning as Sign In and the
+// resume wizard: reached as a quick lookup from many different places (Sign
+// In, Homepage, HR pages — anywhere the shared Header's "Contact Us" link
+// appears), so it should read as a self-contained panel you glance at and
+// leave, not a full page with its own scroll-to-the-bottom footer. The back
+// button returns to wherever it was actually opened from (see App.jsx's
+// previousStateRef), not a hardcoded destination — that's the only way "Back"
+// is correct regardless of which of those places it was reached from.
 import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 
 const TERMINAL_ADDRESS = '683 Epifanio de los Santos Ave, Cubao, Quezon City, Metro Manila, Philippines';
 const MAP_EMBED_SRC = `https://maps.google.com/maps?q=${encodeURIComponent(TERMINAL_ADDRESS)}&output=embed`;
+
+const ARROW_LEFT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>;
 
 const CHANNELS = [
   {
@@ -23,43 +33,69 @@ const CHANNELS = [
   },
 ];
 
-export function Contact({ nav }) {
+export function Contact({ nav, backTo }) {
+  const handleBack = () => nav(backTo?.screen || 'home', backTo?.job || null);
+
   return (
-    <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
-      <section style={{ maxWidth: 1000, margin: '70px auto 0', padding: '0 20px' }}>
-        <div className="fade-in-up" style={{ marginBottom: 44 }}>
-          <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>Get In Touch</div>
-          <h1 style={{ fontWeight: 700, fontSize: 'var(--text-5xl)', margin: '0 0 12px' }}>Contact Us</h1>
-          <p style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: 0, maxWidth: 560 }}>
+    <div style={{ background: 'var(--surface-page)', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-ui)', overflow: 'hidden' }}>
+      <style>{`
+        .contact-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: var(--gray-400) transparent;
+        }
+        .contact-scroll::-webkit-scrollbar { width: 6px; }
+        .contact-scroll::-webkit-scrollbar-track { background: transparent; }
+        .contact-scroll::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 999px; }
+        .contact-scroll::-webkit-scrollbar-thumb:hover { background: var(--gray-500); }
+      `}</style>
+      <div style={{ padding: '20px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div className="contact-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <section style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 20px 32px' }}>
+          <div className="fade-in-up" style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
+            <button
+              onClick={handleBack}
+              className="btn-animate"
+              aria-label="Back"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: '50%',
+                border: 'none', cursor: 'pointer', background: 'var(--surface-page-alt)', color: 'var(--text-primary)', flexShrink: 0,
+              }}
+            >
+              {ARROW_LEFT_ICON}
+            </button>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 4 }}>Get In Touch</div>
+              <h1 style={{ fontWeight: 700, fontSize: 'var(--text-3xl)', margin: 0 }}>Contact Us</h1>
+            </div>
+          </div>
+          <p style={{ fontSize: 'var(--text-md)', opacity: 0.7, margin: '0 0 28px', maxWidth: 560 }}>
             Questions about a role or your application? Reach the Victory Liner HR team through any of the channels below.
           </p>
-        </div>
 
-        <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 50 }}>
-          {CHANNELS.map((c, i) => (
-            <Reveal key={c.label} delay={i * 0.1} style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '26px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{c.icon}</div>
-              <strong style={{ fontSize: 'var(--text-sm)', opacity: 0.75, textTransform: 'uppercase', letterSpacing: 1 }}>{c.label}</strong>
-              <span style={{ fontSize: 'var(--text-md)', lineHeight: 1.5 }}>{c.value}</span>
-            </Reveal>
-          ))}
-        </div>
+          <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 36 }}>
+            {CHANNELS.map((c, i) => (
+              <Reveal key={c.label} delay={i * 0.1} style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{c.icon}</div>
+                <strong style={{ fontSize: 'var(--text-xs)', opacity: 0.75, textTransform: 'uppercase', letterSpacing: 1 }}>{c.label}</strong>
+                <span style={{ fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>{c.value}</span>
+              </Reveal>
+            ))}
+          </div>
 
-        <Reveal delay={0.15} as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 20px' }}>Visit Our Terminal</Reveal>
-        <Reveal delay={0.2} style={{ position: 'relative', width: '100%', height: 320, borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: 70 }}>
-          <iframe
-            title="Victory Liner Cubao Terminal location"
-            src={MAP_EMBED_SRC}
-            width="100%"
-            height="100%"
-            style={{ border: 0, display: 'block' }}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-          />
-        </Reveal>
-      </section>
-      <Footer nav={nav} />
+          <Reveal delay={0.15} as="h2" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 'var(--text-2xl)', margin: '0 0 14px' }}>Visit Our Terminal</Reveal>
+          <Reveal delay={0.2} style={{ position: 'relative', width: '100%', height: 260, borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+            <iframe
+              title="Victory Liner Cubao Terminal location"
+              src={MAP_EMBED_SRC}
+              width="100%"
+              height="100%"
+              style={{ border: 0, display: 'block' }}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </Reveal>
+        </section>
+      </div>
     </div>
   );
 }

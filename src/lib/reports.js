@@ -245,20 +245,40 @@ function inRange(iso, from, to) {
 // *applied* within that window (applications.created_at is the single
 // anchor timestamp) — resume/interview scores, sentiment, and decision
 // counts all narrow to that same cohort so every number on the page is
-// talking about the same group of people. Two things deliberately don't
-// narrow: `jobStats` (published/draft/closed counts) describes the current
-// state of job postings, not a historical cohort, so filtering it by an
-// applicant date range wouldn't mean anything; and week-over-week `trends`
-// are dropped entirely for a custom range (comparing "this week" is
-// meaningless once HR Head is looking at, say, last month specifically).
-export async function getHeadOverview({ from, to } = {}) {
+// talking about the same group of people. Week-over-week `trends` are
+// dropped entirely for a custom range (comparing "this week" is meaningless
+// once HR Head is looking at, say, last month specifically).
+//
+// `category` — a job_postings.category value, or omitted/'all' for every
+// category. Narrows the *entire* report the same way `from`/`to` does,
+// including `jobStats` and `jobBreakdown` (unlike the date range, a category
+// filter genuinely does mean something for "how many postings currently
+// exist" — it's "how many postings currently exist in this category"). The
+// returned `allCategories` list is always the full, unfiltered set of
+// options, independent of which one (if any) is currently selected.
+export async function getHeadOverview({ from, to, category } = {}) {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, hrPersonnel } = raw;
+  const { hrPersonnel } = raw;
   const hasRange = Boolean(from || to);
+  const hasCategory = Boolean(category && category !== 'all');
 
-  const applications = hasRange ? raw.applications.filter((a) => inRange(a.created_at, from, to)) : raw.applications;
-  const scored = hasRange ? raw.scored.filter((s) => inRange(s.createdAt, from, to)) : raw.scored;
+  // Computed from the full, unfiltered job list (not the `jobs` below, which
+  // narrows to the selected category) — the report's own category dropdown
+  // needs every option to stay available regardless of which one is
+  // currently selected, or picking a category would collapse the list down
+  // to just that one entry and make it impossible to pick a different one.
+  const allCategories = [...new Set(raw.jobs.map((j) => j.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+  const jobs = hasCategory ? raw.jobs.filter((j) => j.category === category) : raw.jobs;
+  const jobIdsInCategory = hasCategory ? new Set(jobs.map((j) => j.id)) : null;
+
+  let applications = hasRange ? raw.applications.filter((a) => inRange(a.created_at, from, to)) : raw.applications;
+  let scored = hasRange ? raw.scored.filter((s) => inRange(s.createdAt, from, to)) : raw.scored;
+  if (hasCategory) {
+    applications = applications.filter((a) => jobIdsInCategory.has(a.job_id));
+    scored = scored.filter((s) => jobIdsInCategory.has(s.jobId));
+  }
   const scoredIds = new Set(scored.map((s) => s.applicationId));
   const resumeEvaluations = hasRange ? raw.resumeEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.resumeEvaluations;
   const interviewEvaluations = hasRange ? raw.interviewEvaluations.filter((e) => scoredIds.has(e.application_id)) : raw.interviewEvaluations;
@@ -345,6 +365,7 @@ export async function getHeadOverview({ from, to } = {}) {
   }).sort((a, b) => b.decisionsTotal - a.decisionsTotal);
 
   const resumeScoreDistribution = buildScoreDistribution(scored.map((s) => s.resumeScore).filter((n) => n != null));
+  const interviewScoreDistribution = buildScoreDistribution(scored.map((s) => s.interviewScore).filter((n) => n != null));
 
   const categoryBreakdown = (() => {
     const byCategory = new Map();
@@ -411,9 +432,10 @@ export async function getHeadOverview({ from, to } = {}) {
     data: {
       jobStats, applicantCount: applications.length, funnel, scores, sentiment,
       topCandidates, jobBreakdown, hrActivity, trends,
-      resumeScoreDistribution, categoryBreakdown, weeklyApplications, decisionOutcomes,
+      resumeScoreDistribution, interviewScoreDistribution, categoryBreakdown, weeklyApplications, decisionOutcomes,
       pendingBreakdown, avgTimeToHire, avgTimeToHireByOutcome, recentInterviews,
       range: { from: from || null, to: to || null },
+      allCategories, category: hasCategory ? category : null,
     },
   };
 }

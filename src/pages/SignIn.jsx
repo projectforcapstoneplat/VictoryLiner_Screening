@@ -331,7 +331,15 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
         .auth-panel-form::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 999px; }
         .auth-panel-form::-webkit-scrollbar-thumb:hover { background: var(--gray-500); }
       `}</style>
-      <div style={{ padding: '8px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} /></div>
+      {/* No "About Us" here — it navs to a homepage section, taking the
+          applicant fully out of this self-contained, footer-less sign-in
+          shell to a whole different page with its own scroll and footer.
+          "Contact Us" stays since Contact.jsx got the same no-footer,
+          no-scroll, "back to wherever you came from" treatment, so leaving
+          and returning here still feels contained. */}
+      <div style={{ padding: '8px 60px 0', flexShrink: 0 }} className="page-header-wrap">
+        <Header nav={nav} links={[{ label: 'Contact Us', onClick: () => nav('contact') }]} />
+      </div>
       {/* No footer here, unlike every other page — a login/sign-up screen
           has exactly one job (get the user signed in), and this whole panel
           is sized to fit the viewport without scrolling; a footer would
