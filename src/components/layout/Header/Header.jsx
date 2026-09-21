@@ -137,10 +137,14 @@ function NotificationBell({ applicantId, nav }) {
       markNotificationRead(n.id);
       setNotifications((rows) => rows.map((r) => (r.id === n.id ? { ...r, read_at: new Date().toISOString() } : r)));
     }
-    // job_id survives the job posting itself being deleted (set null on
-    // delete) — 'matches' is always a valid landing spot either way, and
-    // shows this exact job if it's still published and still qualifies.
-    nav('matches');
+    // A status-change notification (see send-status-email) is about an
+    // application, not a job to browse — 'my-applications' is where that
+    // status actually lives. Everything else is still the original "a new
+    // opening matches you" case: job_id survives the job posting itself
+    // being deleted (set null on delete) — 'matches' is always a valid
+    // landing spot either way, and shows this exact job if it's still
+    // published and still qualifies.
+    nav(n.type === 'status_change' ? 'my-applications' : 'matches');
   };
 
   const handleMarkAllRead = (e) => {

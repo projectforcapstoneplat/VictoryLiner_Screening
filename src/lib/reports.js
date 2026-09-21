@@ -40,10 +40,23 @@ function weekTrend(timestamps) {
   return { direction: pct > 0 ? 'up' : 'down', label: `${pct > 0 ? '+' : ''}${pct}% vs last week` };
 }
 
+// When each application actually left "submitted" — i.e. passed initial
+// screening, whether HR advanced it to interview_stage, HR declined it
+// straight from the resume stage, or quick-apply auto-advanced it. Prefers
+// the real decision_log timestamp (covers every *manual* HR action —
+// updateApplicationStatus in src/lib/applications.js logs every one), falls
+// back to interview_stage_at (the one path that never logs a decision:
+// quick-apply's own auto-advance, see supabase/functions/quick-apply), and
+// created_at as a last resort so a row is never silently dropped from the
+// trend just because neither of those was ever set.
+function passedScreeningAt(application, decisionLogByApp) {
+  return decisionLogByApp.get(application.id) || application.interview_stage_at || application.created_at;
+}
+
 async function loadRaw() {
   const [jobsRes, appsRes, resumeEvalRes, responsesRes, interviewEvalRes, hrRes, decisionLogRes] = await Promise.all([
     supabase.from('job_postings').select('*').order('created_at', { ascending: false }),
-    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at, scheduled_interview_at'),
+    supabase.from('applications').select('id, job_id, full_name, email, status, skills, created_at, scheduled_interview_at, interview_stage_at'),
     supabase.from('resume_evaluations').select('application_id, job_id, score, evaluated_at'),
     supabase.from('interview_responses').select('id, application_id, video_path, interview_questions(question_text)'),
     supabase.from('interview_evaluations').select('response_id, application_id, evaluation_score, sentiment_label, evaluated_at'),
@@ -124,16 +137,26 @@ function buildPipeline(rows) {
   };
 }
 
-// Fixed-width buckets over the 0-100 score range — used for the resume
-// score distribution chart. Order matters (drives left-to-right rendering);
-// count stays 0 rather than being omitted when a bucket is empty, so the
-// chart's x-axis doesn't silently skip a range.
+// Uneven on purpose, and deliberately coarse. A sub-threshold score isn't
+// just rare here, it's structurally unreachable: JobDetails.jsx's "Apply
+// Now" button only ever renders when matchState.qualifies (score >= the
+// job's effective minimum, same >= check JobMatches.jsx uses to decide what
+// even shows up as a match) — quickApply() has exactly one caller in the
+// whole client, that same gated button. There's no path in the app for an
+// applicant to submit an application below the threshold, so a bucket
+// implying that's a normal, expected category would be actively misleading.
+// The lowest bucket's floor is still 0 (not the threshold itself) purely as
+// a safety net for real but rare historical drift — a job's own
+// min_resume_match_percent override can be edited *after* applications
+// already exist against it, which could leave an old application reading
+// below a since-raised bar; this still counts that application rather than
+// silently dropping it, it just doesn't get its own misleading row. Order
+// matters (drives left-to-right rendering); count stays 0 rather than being
+// omitted when a bucket is empty, so the chart doesn't silently skip a range.
 const SCORE_BUCKETS = [
-  { label: '0-20%', min: 0, max: 20 },
-  { label: '21-40%', min: 21, max: 40 },
-  { label: '41-60%', min: 41, max: 60 },
-  { label: '61-80%', min: 61, max: 80 },
-  { label: '81-100%', min: 81, max: 100 },
+  { label: 'Borderline (up to 69%)', min: 0, max: 69 },
+  { label: 'Strong (70-89%)', min: 70, max: 89 },
+  { label: 'Excellent (90-100%)', min: 90, max: 100 },
 ];
 
 function buildScoreDistribution(scores) {
@@ -453,7 +476,7 @@ export async function getScoredApplicants() {
 export async function getPersonnelOverview() {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };
-  const { jobs, applications, interviewEvaluations, scored } = raw;
+  const { jobs, applications, interviewEvaluations, decisionLog, scored } = raw;
 
   const pending = scored.filter((s) => s.readyForDecision).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   // "Video pending" — HR already advanced them into interview_stage, but
@@ -471,21 +494,41 @@ export async function getPersonnelOverview() {
     readyForDecision: pending.length,
   };
 
+  // Earliest logged interview_stage/declined decision per application — see
+  // passedScreeningAt's own comment for why this (rather than just
+  // interview_stage_at alone) is the right source.
+  const passedScreeningLogAt = new Map();
+  for (const d of decisionLog) {
+    if (d.status !== 'interview_stage' && d.status !== 'declined') continue;
+    const existing = passedScreeningLogAt.get(d.application_id);
+    if (!existing || new Date(d.decided_at) < new Date(existing)) passedScreeningLogAt.set(d.application_id, d.decided_at);
+  }
+
   const trends = {
     totalApplicants: weekTrend(applications.map((a) => a.created_at)),
     videoPending: null,
-    // No reliable "when HR advanced" timestamp without joining
-    // application_decision_log — drop the trend rather than fake one.
-    passedScreening: null,
+    passedScreening: weekTrend(
+      applications.filter((a) => a.status !== 'submitted').map((a) => passedScreeningAt(a, passedScreeningLogAt)),
+    ),
+    // No reliable "when this became ready-for-decision" timestamp — it's a
+    // derived state (resume score + interview completion + status), not a
+    // single logged event, so there's nothing honest to compare week over
+    // week. Drop the trend rather than fake one.
     readyForDecision: null,
   };
 
+  // Not capped here anymore — HrPersonnelDashboard.jsx's Hiring Progress
+  // card paginates this itself (same reasoning as `recent` below), so a
+  // posting past the old top-3 cutoff is still reachable, not silently gone.
   const jobBreakdown = jobs.map((job) => {
     const rows = scored.filter((s) => s.jobId === job.id);
     return { job, applicantCount: rows.length, pipeline: buildPipeline(rows) };
-  }).filter((j) => j.applicantCount > 0).sort((a, b) => b.applicantCount - a.applicantCount).slice(0, 3);
+  }).filter((j) => j.applicantCount > 0).sort((a, b) => b.applicantCount - a.applicantCount);
 
-  const recent = [...scored].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8);
+  // Not capped here anymore — HrPersonnelDashboard.jsx's Recent Applications
+  // card paginates this itself, so a growing applicant pool gets more pages
+  // instead of quietly dropping everyone past a hardcoded cutoff.
+  const recent = [...scored].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   // Where the current applicant pool's resume scores cluster — helps HR
   // Personnel gauge their queue at a glance (mostly borderline candidates?

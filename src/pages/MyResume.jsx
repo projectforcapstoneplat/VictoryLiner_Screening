@@ -92,7 +92,16 @@ export function MyResume({ profile, nav }) {
         }
       `}</style>
 
-      <div className="no-print" style={{ padding: '30px 60px 0' }}><Header nav={nav} profile={profile} /></div>
+      <div className="no-print" style={{ padding: '30px 60px 0' }}>
+        <Header
+          nav={nav}
+          profile={profile}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
 
       <section style={{ maxWidth: 900, margin: '60px auto 0', padding: '0 20px' }}>
         <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>

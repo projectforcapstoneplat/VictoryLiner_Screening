@@ -8,7 +8,7 @@
 // "Create an Account" / "Sign In Instead" buttons) uses local state instead
 // of a real nav(), which is what makes the slide animatable at all — two
 // different mounted pages can't tween between each other.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
@@ -16,7 +16,7 @@ import { RequirementRow } from '../components/core/RequirementRow/RequirementRow
 import { FloatingInput } from '../components/core/FloatingInput/FloatingInput.jsx';
 import { EmailOtpFields } from '../components/core/EmailOtpFields/EmailOtpFields.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
-import { signInWithPassword, signInWithGoogle, signUpApplicant, getProfile, signOut, requestPasswordReset } from '../lib/auth.js';
+import { signInWithPassword, signInWithGoogle, signUpApplicant, verifySignupOtp, resendSignupOtp, getProfile, signOut, requestPasswordReset } from '../lib/auth.js';
 import { getPasswordChecklist, isPasswordValid } from '../lib/passwordRules.js';
 import { isValidEmailFormat, isDisposableEmail } from '../lib/emailRules.js';
 import { friendlyAuthError } from '../lib/authErrors.js';
@@ -152,6 +152,18 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
   const [caLoading, setCaLoading] = useState(false);
   const [confirmationSent, setConfirmationSent] = useState(false);
   const [termsShake, setTermsShake] = useState(0);
+
+  // Post-signup email verification — a code typed in here, not a link
+  // clicked in the confirmation email. Pairs with a Dashboard-side change to
+  // Supabase's "Confirm signup" email template (swaps {{ .ConfirmationURL }}
+  // for {{ .Token }}) — this app has no config.toml, so that template itself
+  // isn't something this codebase controls.
+  const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpResending, setOtpResending] = useState(false);
+  const [otpCooldown, setOtpCooldown] = useState(0);
+  const otpCooldownRef = useRef(null);
 
   // Forgot Password state — a third slide-in panel on this same shell
   // rather than a separate page nav, same reasoning as Sign In <-> Create
@@ -295,6 +307,58 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
       return;
     }
     setConfirmationSent(true);
+  };
+
+  const RESEND_COOLDOWN_SECONDS = 30;
+  const startOtpCooldown = () => {
+    setOtpCooldown(RESEND_COOLDOWN_SECONDS);
+    clearInterval(otpCooldownRef.current);
+    otpCooldownRef.current = setInterval(() => {
+      setOtpCooldown((s) => {
+        if (s <= 1) {
+          clearInterval(otpCooldownRef.current);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
+  useEffect(() => () => clearInterval(otpCooldownRef.current), []);
+
+  const handleVerifySignupCode = async () => {
+    setOtpError('');
+    if (!otpCode.trim()) {
+      setOtpError('Please enter the code we emailed you.');
+      return;
+    }
+    setOtpVerifying(true);
+    const { data, error: verifyError } = await verifySignupOtp(caEmail, otpCode.trim());
+    setOtpVerifying(false);
+    if (verifyError) {
+      setOtpError(friendlyAuthError(verifyError.message));
+      return;
+    }
+    // verifyOtp with type:'signup' returns a real session directly — no
+    // separate sign-in step needed, unlike the old link-based confirmation
+    // ("Confirm your email, then sign in").
+    if (data.session) {
+      nav(redirectTo || 'home');
+      return;
+    }
+    setMode('signin');
+  };
+
+  const handleResendSignupCode = async () => {
+    setOtpError('');
+    setOtpResending(true);
+    const { error: resendError } = await resendSignupOtp(caEmail);
+    setOtpResending(false);
+    if (resendError) {
+      setOtpError(friendlyAuthError(resendError.message));
+      return;
+    }
+    setOtpCode('');
+    startOtpCooldown();
   };
 
   // 'forgot' has no photo-panel copy of its own — it's a sub-flow of
@@ -534,8 +598,22 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
 
                 {confirmationSent ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'center' }}>
-                    <p style={{ fontSize: 'var(--text-sm)' }}>We sent a confirmation link to <strong>{caEmail}</strong>. Confirm your email, then sign in.</p>
-                    <Button variant="strong" size="lg" onClick={() => setMode('signin')}>Go to Sign In</Button>
+                    <p style={{ fontSize: 'var(--text-sm)' }}>We emailed a code to <strong>{caEmail}</strong>. Enter it below to verify your account.</p>
+                    <FloatingInput id="create-otp-code" label="Verification Code" type="text" value={otpCode} onChange={(e) => setOtpCode(e.target.value)} />
+                    <FormError message={otpError} />
+                    <Button variant="strong" size="lg" onClick={handleVerifySignupCode} disabled={otpVerifying}>
+                      {otpVerifying ? 'Verifying…' : 'Verify & Continue'}
+                    </Button>
+                    <button
+                      onClick={handleResendSignupCode}
+                      disabled={otpResending || otpCooldown > 0}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'var(--text-sm)', fontWeight: 700,
+                        color: 'var(--action-primary-bg)', padding: 4, opacity: otpCooldown > 0 ? 0.5 : 1,
+                      }}
+                    >
+                      {otpResending ? 'Resending…' : otpCooldown > 0 ? `Resend Code (${otpCooldown}s)` : 'Resend Code'}
+                    </button>
                   </div>
                 ) : (
                   <>

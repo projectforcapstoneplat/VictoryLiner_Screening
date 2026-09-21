@@ -48,7 +48,15 @@ export function Contact({ nav, backTo }) {
         .contact-scroll::-webkit-scrollbar-thumb { background: var(--gray-400); border-radius: 999px; }
         .contact-scroll::-webkit-scrollbar-thumb:hover { background: var(--gray-500); }
       `}</style>
-      <div style={{ padding: '20px 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '20px 60px 0', flexShrink: 0 }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
       <div className="contact-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <section style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 20px 32px' }}>
           <div className="fade-in-up" style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>

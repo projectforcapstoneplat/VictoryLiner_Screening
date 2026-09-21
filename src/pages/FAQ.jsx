@@ -1,52 +1,55 @@
-// Careers FAQ — the footer used to link here and do nothing (href="#",
+// Careers FAQ: the footer used to link here and do nothing (href="#",
 // preventDefault). Content is grounded in what this system actually does
-// (structured resume instead of file upload, video interview, AI-assisted
-// screening, in-app status only — no email/SMS yet) rather than generic
+// (structured resume with optional file upload, video interview,
+// AI-assisted screening, automatic status emails) rather than generic
 // filler, so it doesn't promise anything the site doesn't actually deliver.
 import { useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 
 const FAQS = [
   {
     q: 'How do I apply for a job?',
-    a: 'Browse open positions, pick a role, and create an account (or sign in). You\'ll fill out a structured "My Information / Resume" form, then record short video answers to a few interview questions — no separate interview scheduling needed.',
+    a: 'Create an account (or sign in) and fill out your "My Resume" profile once: work experience, education, skills, and more. Our AI then shows you which open positions actually match your background; clicking "Apply Now" on a matching job submits instantly using that saved profile, no retyping. If your resume clears that role\'s minimum match score, your video interview unlocks right away.',
   },
   {
     q: 'Do I need to upload a resume file?',
-    a: 'No. Instead of uploading a PDF or Word document, you fill out a structured form (work experience, education, skills, certifications, etc.). This keeps your information clean and consistent, and avoids issues with blurry scans or hard-to-read file formats.',
+    a: 'Not required, but you can. Fill out the "My Resume" form by hand, or upload a PDF/Word resume and we\'ll automatically read it and fill the form in for you. You just review and correct anything before saving. Either way, your information ends up in the same clean, structured format rather than a scanned or hard-to-parse file.',
   },
   {
     q: 'What is the video interview, and can I re-record my answers?',
-    a: 'After submitting your information, you\'ll record short video answers to a set of questions for the role using your camera and microphone. You can re-record any answer as many times as you like — before or after submitting it — right up until HR makes a decision.',
+    a: 'You\'ll record short video answers to a set of questions for the role, one at a time. Each stays hidden until you click Start, so nobody gets extra time to prepare or look anything up. You get up to 3 attempts per question, whether you re-record before or after submitting, right up until HR makes a decision. Once every question is submitted, there\'s no further editing; HR reviews from there.',
+  },
+  {
+    q: 'What do I need before starting my video interview?',
+    a: 'A working camera and microphone, and a reasonably stable internet connection, since you\'ll be uploading a video after each answer. Right before your first question, you\'ll see a short walkthrough of how the interview works (watch the video, or just read the summary), then a quick on-screen check confirming your camera, microphone, and connection all look good.',
   },
   {
     q: 'Will I be notified about my application status?',
-    a: 'Yes — check the "My Applications" page any time to see a live status for each application (e.g. action needed, under review, advanced, not selected). We don\'t send status emails or texts yet, so the My Applications page is currently the only place this updates.',
+    a: 'Yes. Check the "My Application" page any time to see a live status for each application (e.g. action needed, under review, advanced, not selected). We also email you automatically when your status changes or a deadline is coming up.',
   },
   {
     q: 'Can I apply to more than one job?',
-    a: 'Yes, and you don\'t have to start from scratch each time — when you apply to a second role, we pre-fill your information from your most recent application so you only need to review and adjust it, not retype everything.',
+    a: 'Yes. Your "My Resume" profile is saved once and reused for every job you apply to, so applying to another matching role is just a click from that job\'s page, with no re-entering your information. Once one of your applications reaches the video interview stage (or you\'re accepted), though, new applications are paused until that one is resolved, so you\'re never juggling more than one active interview at a time.',
   },
   {
     q: 'Can I edit my application after submitting it?',
-    a: 'Not directly — applications are locked once submitted so HR is always reviewing the version you intended to send. If you need to correct something important, reach out via Contact Us and HR can advise on next steps.',
+    a: 'Not directly. Applications are locked once submitted so HR is always reviewing the version you intended to send. If you need to correct something important, reach out via Contact Us and HR can advise on next steps.',
   },
   {
     q: 'How is my application evaluated?',
-    a: 'As part of our recruitment process, we use AI tools to help screen and assess applications against each role\'s stated qualifications and screening criteria — matching what you\'ve written against what the role actually needs, not just exact keyword matches. A member of our HR team still reviews candidates before any decision is made.',
+    a: 'As part of our recruitment process, we use AI tools to help screen and assess applications against each role\'s stated qualifications and screening criteria, matching what you\'ve written against what the role actually needs, not just exact keyword matches. A member of our HR team still reviews candidates before any decision is made.',
   },
   {
     q: 'What documents or IDs do I need to prepare?',
-    a: 'For most roles, nothing needs to be uploaded up front — driving-related roles ask you to state your license type, restriction codes, and related qualifications directly in the form. Physical documents (e.g. NBI clearance, license copy) are typically verified later in the process, not at initial application.',
+    a: 'For most roles, nothing needs to be uploaded up front. Driving-related roles ask you to state your license type, restriction codes, and related qualifications directly in the form. Physical documents (e.g. NBI clearance, license copy) are typically verified later in the process, not at initial application.',
   },
   {
     q: 'Is my information kept private?',
     a: 'Your application data is only visible to authorized HR staff reviewing candidates for the role(s) you applied to. See our Privacy Policy for full details.',
   },
   {
-    q: 'I need accommodations during the application process — who do I contact?',
+    q: 'Who do I contact if I need accommodations during the application process?',
     a: 'Victory Liner is committed to an inclusive, accessible recruitment process. If you require reasonable accommodations at any stage, reach out via Contact Us and our HR team will assist.',
   },
 ];
@@ -83,7 +86,15 @@ export function FAQ({ nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
       <section style={{ maxWidth: 820, margin: '70px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up" style={{ textAlign: 'center', marginBottom: 44 }}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>
@@ -105,7 +116,6 @@ export function FAQ({ nav }) {
           <Button variant="ghost" size="sm" onClick={() => nav('filter')}>Browse Open Positions</Button>
         </div>
       </section>
-      <Footer nav={nav} />
     </div>
   );
 }

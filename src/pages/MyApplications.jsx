@@ -219,8 +219,8 @@ export function MyApplications({ profile, nav, focusJobId }) {
         >
           {HOME_ICON} Home
         </button>
-        <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>My Applications</h1>
-        <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>Track your submitted applications and complete your video interview here.</p>
+        <h1 style={{ fontWeight: 600, fontSize: 'var(--text-3xl)', margin: '0 0 8px' }}>My Application</h1>
+        <p style={{ fontSize: 'var(--text-sm)', opacity: 0.8, marginBottom: 30 }}>Track your submitted application and complete your video interview here.</p>
         {loading ? (
           <p>Loading…</p>
         ) : applications.length === 0 ? (
@@ -302,15 +302,23 @@ export function MyApplications({ profile, nav, focusJobId }) {
                           </button>
                         )
                       )}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)', opacity: 0.6, whiteSpace: 'nowrap' }}>
-                        {expanded ? 'Hide progress' : 'View progress'}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : a.id); }}
+                        className="btn-animate"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 16px', borderRadius: 999,
+                          border: '1.5px solid var(--pink-100)', background: expanded ? 'var(--pink-100)' : 'transparent',
+                          cursor: 'pointer', fontFamily: 'inherit', color: 'var(--action-primary-bg)', fontSize: 'var(--text-xs)', fontWeight: 700, whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {expanded ? 'Hide Progress' : 'View Progress'}
                         <svg
                           width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
-                          style={{ transition: 'transform 0.2s ease', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                          style={{ transition: 'transform 0.2s ease', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}
                         >
                           <path d="m6 9 6 6 6-6" />
                         </svg>
-                      </div>
+                      </button>
                     </div>
                   </div>
                   {expanded && (

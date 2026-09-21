@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
-import { Breadcrumb } from '../components/navigation/Breadcrumb/Breadcrumb.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
 import { deadlineInfo } from '../lib/deadline.js';
 import { quickApply } from '../lib/quickApply.js';
@@ -31,6 +30,17 @@ const SECTION_ICONS = {
   ai: <svg {...ICON_PROPS}><rect x="4" y="7" width="16" height="12" rx="2" /><path d="M12 7V3M9 3h6M9 13h.01M15 13h.01" /></svg>,
 };
 
+// Per-bullet markers matching that section's own header icon — Required
+// gets a small checkmark, Preferred a small star, so scanning the list
+// itself echoes the section it belongs to instead of every list looking
+// identical regardless of what kind of item it is. Anything else (plain
+// disclosures split across lines) keeps the neutral dot.
+const BULLET_ICON_PROPS = { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'var(--action-primary-bg)', strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const BULLET_ICONS = {
+  required: <svg {...BULLET_ICON_PROPS}><path d="M4 12l5 5 11-11" /></svg>,
+  preferred: <svg {...BULLET_ICON_PROPS} strokeWidth={1.6} fill="var(--action-primary-bg)"><path d="M12 2l2.6 6.6L21 9.3l-5 4.5 1.4 7.2L12 17.5 6.6 21l1.4-7.2-5-4.5 6.4-.7z" /></svg>,
+};
+
 // HR writes these in a plain <textarea> (JobPostingForm.jsx) and naturally
 // enters one responsibility/qualification per line — but a bare <p> collapses
 // every line break into a single space, so it rendered as one dense,
@@ -44,7 +54,7 @@ function SectionCard({ icon, title, body, delay }) {
   const lines = (body || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const isList = lines.length > 1;
   return (
-    <div className="fade-in-up" style={{ animationDelay: `${delay}s`, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '28px 32px', marginBottom: 20 }}>
+    <div className="fade-in-up" style={{ animationDelay: `${delay}s`, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '32px 36px', marginBottom: 28 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <span style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           {SECTION_ICONS[icon]}
@@ -55,7 +65,11 @@ function SectionCard({ icon, title, body, delay }) {
         <ul style={{ margin: 0, padding: 0, paddingLeft: 42, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {lines.map((line, i) => (
             <li key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', fontSize: 'var(--text-sm)', lineHeight: 1.65, opacity: 0.85 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--action-primary-bg)', flexShrink: 0, marginTop: 8 }} />
+              {BULLET_ICONS[icon] ? (
+                <span style={{ display: 'flex', flexShrink: 0, marginTop: 5 }}>{BULLET_ICONS[icon]}</span>
+              ) : (
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--action-primary-bg)', flexShrink: 0, marginTop: 8 }} />
+              )}
               <span>{line}</span>
             </li>
           ))}
@@ -133,8 +147,13 @@ function ApplyAction({ canApply, profile, matchState, applying, applyError, exis
 
 function MetaRow({ icon, label }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--text-sm)' }}>
-      <span style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: 0.7 }}>{icon}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 'var(--text-sm)' }}>
+      <span style={{
+        width: 30, height: 30, borderRadius: 8, background: 'var(--pink-100)', color: 'var(--action-primary-bg)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      }}>
+        {icon}
+      </span>
       {label}
     </div>
   );
@@ -233,12 +252,17 @@ export function JobDetails({ job, nav, profile, backTo }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          links={[{ label: 'Contact Us', onClick: () => nav('contact') }]}
+        />
+      </div>
 
       {/* Hero band — gives the page a real visual anchor instead of jumping straight into plain text on a bare background. */}
       <div className="fade-in-up" style={{ marginTop: 40, background: 'linear-gradient(120deg, var(--action-primary-bg), var(--red-700))', padding: '56px 20px' }}>
-        <div style={{ maxWidth: 1086, margin: '0 auto' }}>
-          <div style={{ marginBottom: 22, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto' }}>
+          <div style={{ marginBottom: 22, display: 'flex', alignItems: 'center' }}>
             <button
               onClick={handleBack}
               className="btn-animate"
@@ -250,9 +274,6 @@ export function JobDetails({ job, nav, profile, backTo }) {
             >
               {ARROW_LEFT_ICON}
             </button>
-            <div style={{ opacity: 0.9 }}>
-              <Breadcrumb items={[{ label: 'Home', onClick: () => nav('home') }, 'Job Details']} />
-            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
             <span style={{ width: 64, height: 64, borderRadius: 16, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, filter: 'brightness(0) invert(1)' }}>
@@ -266,7 +287,7 @@ export function JobDetails({ job, nav, profile, backTo }) {
         </div>
       </div>
 
-      <section style={{ maxWidth: 1086, margin: '0 auto', padding: '0 20px' }}>
+      <section style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px' }}>
         <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginTop: -32 }}>
           {/* Main content column */}
           <div style={{ flex: '2 1 560px', minWidth: 0 }}>
@@ -275,9 +296,22 @@ export function JobDetails({ job, nav, profile, backTo }) {
             {STATIC_SECTIONS.map((s, i) => <SectionCard key={s.h} icon={s.icon} title={s.h} body={s.body} delay={0.2 + i * 0.05} />)}
           </div>
 
-          {/* Sticky apply card */}
+          {/* Sticky apply card — deliberately no .hover-lift here (unlike
+              the content cards): that class is meant for clickable-feeling
+              cards, but this one is a sticky info panel with its own
+              Apply button inside, not a click target itself. Combined with
+              position:sticky, the translateY(-6px) hover motion read as a
+              stray shadow/edge artifact rather than an intentional effect. */}
           <div style={{ flex: '1 1 300px', minWidth: 280 }}>
-            <div className="fade-in-up hover-lift" style={{ animationDelay: '0.1s', position: 'sticky', top: 24, background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '28px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+              className="fade-in-up"
+              style={{
+                animationDelay: '0.1s', position: 'sticky', top: 24, background: 'var(--surface-card)',
+                borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '28px',
+                display: 'flex', flexDirection: 'column', gap: 16,
+                border: '1.5px solid var(--pink-100)',
+              }}
+            >
               <div style={{ fontWeight: 700, fontSize: 'var(--text-md)' }}>Job Overview</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {j.location && (

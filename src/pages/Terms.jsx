@@ -2,7 +2,6 @@
 // application instead of file upload, video interview, applications lock
 // after submission, in-app status only) rather than generic boilerplate.
 import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
 
 // Exported so the Create Account consent step (SignIn.jsx) can show the
 // exact same content in an in-page modal instead of duplicating it — one
@@ -41,7 +40,15 @@ export const TERMS_SECTIONS = [
 export function Terms({ nav }) {
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
       <section style={{ maxWidth: 820, margin: '70px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up" style={{ marginBottom: 44 }}>
           <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--action-primary-bg)', marginBottom: 8 }}>Legal</div>
@@ -58,7 +65,6 @@ export function Terms({ nav }) {
           ))}
         </div>
       </section>
-      <Footer nav={nav} />
     </div>
   );
 }

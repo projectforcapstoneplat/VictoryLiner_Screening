@@ -157,6 +157,14 @@ a {
   100% { transform: translateY(0) translateX(0); }
 }
 
+/* Reuses formErrorIn's own drop+shake timing (see FormError above) for a
+   control that needs the same "that didn't work" shake without FormError's
+   own background/padding/icon chrome — e.g. a checkbox row rejecting a click
+   instead of a banner of text. */
+.shake-row {
+  animation: formErrorIn 0.4s ease;
+}
+
 /* Stepper's driving bus (see src/components/navigation/Stepper) — position is
    animated inline via `left`; these add the idle "engine running" motion so
    it reads as alive even while parked at the current step. */
@@ -308,7 +316,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-pulse, .hero-zoom, .form-error {
+  .fade-in-up, .hover-lift, .btn-animate, .social-icon, .loading-pulse, .hero-zoom, .form-error, .shake-row {
     animation: none !important;
     transition: none !important;
   }

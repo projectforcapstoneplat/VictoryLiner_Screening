@@ -11,13 +11,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
-import { Input } from '../components/core/Input/Input.jsx';
-import { Select } from '../components/core/Select/Select.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
+import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import {
   FadeSection, EMPTY_EXPERIENCE, EMPTY_EDUCATION, EMPTY_CERTIFICATION, EDUCATION_LEVELS,
-  LICENSE_RESTRICTION_CODES, isPhoneValid, SECTION_STYLE, GRID_2COL, FIELD_STYLE, SECTION_ICONS,
-  SectionHeader, RepeatableSection, TagInput,
+  LICENSE_RESTRICTION_CODES, isPhoneValid, SECTION_STYLE, GRID_2COL, SECTION_ICONS,
+  SectionHeader, RepeatableSection, TagInput, ResumeField, ResumeSelect, autoResizeTextarea,
 } from '../components/forms/ResumeFields/ResumeFields.jsx';
 import { getMyResume, upsertMyResume } from '../lib/applicantResume.js';
 import { clearMyMatches } from '../lib/resumeMatches.js';
@@ -95,6 +94,11 @@ function ReviewRow({ label, value }) {
   );
 }
 
+const FIELD_ICON_PROPS = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const MAIL_ICON = <svg {...FIELD_ICON_PROPS}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>;
+const PHONE_ICON = <svg {...FIELD_ICON_PROPS}><path d="M6.6 10.8a15.6 15.6 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.36 2.3.56 3.5.56a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.6 21 3 13.4 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.2.2 2.4.56 3.5a1 1 0 0 1-.25 1z" /></svg>;
+const PIN_ICON = <svg {...FIELD_ICON_PROPS}><path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>;
+
 // Clickable so the applicant can jump straight to any section instead of
 // clicking Next five times to reach, say, Certifications — no gating on
 // completion, since "let me skip ahead and come back" is the whole point.
@@ -105,14 +109,20 @@ function ReviewRow({ label, value }) {
 function StepProgress({ step, onStepClick, isStepComplete }) {
   return (
     <div style={{ width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-xs)', opacity: 0.6, marginBottom: 12 }}>
-        <span>Step {step + 1} of {STEP_TITLES.length}</span>
-        <span>{STEP_TITLES[step]}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: 'var(--action-primary-bg)' }}>
+          Step {step + 1} of {STEP_TITLES.length}
+        </span>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, opacity: 0.65 }}>{STEP_TITLES[step]}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         {STEP_TITLES.map((title, i) => {
           const complete = isStepComplete(i);
           const isCurrent = i === step;
+          // Current step reads as solid-filled too, not just outlined — a
+          // step in progress should look at least as "active" as one
+          // already finished, not less.
+          const filled = complete || isCurrent;
           return (
             <div key={title} style={{ display: 'flex', alignItems: 'center', flex: i < STEP_TITLES.length - 1 ? 1 : '0 0 auto' }}>
               <button
@@ -123,12 +133,12 @@ function StepProgress({ step, onStepClick, isStepComplete }) {
                 aria-current={isCurrent ? 'step' : undefined}
                 className="btn-animate"
                 style={{
-                  width: 28, height: 28, borderRadius: '50%', flexShrink: 0, cursor: 'pointer', fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--text-xs)', fontWeight: 700,
-                  border: isCurrent ? '2px solid var(--action-primary-bg)' : complete ? 'none' : '2px solid var(--gray-400)',
-                  background: complete ? 'var(--action-primary-bg)' : 'var(--surface-card)',
-                  color: complete ? '#fff' : isCurrent ? 'var(--action-primary-bg)' : 'var(--text-primary)',
-                  opacity: complete || isCurrent ? 1 : 0.65,
+                  width: 32, height: 32, borderRadius: '50%', flexShrink: 0, cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--text-sm)', fontWeight: 700,
+                  border: filled ? 'none' : '2px solid var(--gray-400)',
+                  background: filled ? 'var(--action-primary-bg)' : 'var(--surface-card)',
+                  color: filled ? '#fff' : 'var(--text-primary)',
+                  opacity: filled ? 1 : 0.65,
                   transition: 'background 0.25s ease, border-color 0.25s ease, opacity 0.25s ease',
                 }}
               >
@@ -192,6 +202,13 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   // entry), even though leaving it blank is the *correct*, fully-valid
   // answer for someone with nothing to put there yet.
   const [noWorkExperience, setNoWorkExperience] = useState(false);
+  // Drives the checkbox's reject-shake (see hasWorkEntry below) — a counter,
+  // not a boolean, so clicking again while already rejected still re-plays
+  // the animation (changing a key to the same value wouldn't remount).
+  const [noExpWarning, setNoExpWarning] = useState(0);
+  const [noExpWarningVisible, setNoExpWarningVisible] = useState(false);
+  const noExpWarningTimeoutRef = useRef(null);
+  useEffect(() => () => clearTimeout(noExpWarningTimeoutRef.current), []);
   const [educationLevel, setEducationLevel] = useState('');
   const [education, setEducation] = useState([{ ...EMPTY_EDUCATION }]);
   const [certifications, setCertifications] = useState([{ ...EMPTY_CERTIFICATION }]);
@@ -211,13 +228,13 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   const [reviewing, setReviewing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [isDraft, setIsDraft] = useState(false);
-  // UI only for now, per explicit request — "Upload My Resume" has no
-  // parsing logic behind it yet, so it's shown as a disabled-looking,
-  // unclickable option (a design review step before that gets built) while
-  // "Build It Manually" leads straight into the wizard below, since that's
-  // just routing to what's already fully working, not new functionality.
-  // Only relevant for a brand-new resume — revisiting/updating an existing
-  // one (editing) always goes straight to the wizard, no choice needed.
+  // The choice between the two build methods, shown once for a brand-new
+  // resume — "Build It Manually" leads straight into the wizard below,
+  // "Upload My Resume" opens the extraction-consent modal first (see
+  // showUploadConsent/handleFileSelected below), then the file picker only
+  // once that's accepted. Only relevant for a brand-new resume — revisiting/
+  // updating an existing one (editing) always goes straight to the wizard,
+  // no choice needed.
   const [buildMethod, setBuildMethod] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -229,6 +246,36 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   // it'd persist the wizard's state from before the upload, not after.
   const [justUploaded, setJustUploaded] = useState(false);
   const fileInputRef = useRef(null);
+  // "Upload My Resume" no longer opens the file picker directly — it opens
+  // this consent modal first, and the picker only appears once the
+  // applicant actually accepts. Asking permission before ever prompting for
+  // a file (rather than after one's already picked) is the whole point:
+  // nothing about a file is read or sent anywhere until consent is given,
+  // and now the applicant knows what they're agreeing to before they've
+  // even committed to choosing one.
+  const [showUploadConsent, setShowUploadConsent] = useState(false);
+  const [uploadConsentChecked, setUploadConsentChecked] = useState(false);
+  // Same "reject the click with a visible reason" pattern as the no-work-
+  // experience checkbox below — clicking Accept while unchecked used to just
+  // silently do nothing (native `disabled` swallows the click entirely, with
+  // no way to tell the applicant why). uploadConsentWarning is a counter, not
+  // a boolean, so the shake replays on every repeat click, not just the first.
+  const [uploadConsentWarning, setUploadConsentWarning] = useState(0);
+  const [uploadConsentWarningVisible, setUploadConsentWarningVisible] = useState(false);
+  const uploadConsentWarningTimeoutRef = useRef(null);
+  useEffect(() => () => clearTimeout(uploadConsentWarningTimeoutRef.current), []);
+  // Basic Information's own field order, for Enter-to-advance — First Name
+  // has no ref since nothing ever focuses *into* it programmatically.
+  const lastNameRef = useRef(null);
+  const emailRef = useRef(null);
+  const phoneRef = useRef(null);
+  const locationRef = useRef(null);
+  const ageRef = useRef(null);
+  const focusNext = (ref) => (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    ref.current?.focus();
+  };
   // Which specific fields to outline in red — recomputed fresh on every
   // failed Next/Save attempt (not "live" as you type), so a field stays
   // flagged until you actually try to move on again, not just while it
@@ -291,6 +338,32 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
+  // "Upload My Resume" click — opens the consent modal, not the file
+  // picker. The picker only ever opens from handleAcceptUploadConsent below.
+  const handleUploadClick = () => {
+    if (uploading) return;
+    setUploadError('');
+    setUploadConsentChecked(false);
+    setShowUploadConsent(true);
+  };
+
+  const handleDeclineUploadConsent = () => {
+    setShowUploadConsent(false);
+    setUploadConsentChecked(false);
+  };
+
+  const handleAcceptUploadConsent = () => {
+    setShowUploadConsent(false);
+    fileInputRef.current?.click();
+  };
+
+  const handleBlockedUploadConsent = () => {
+    setUploadConsentWarning((n) => n + 1);
+    setUploadConsentWarningVisible(true);
+    clearTimeout(uploadConsentWarningTimeoutRef.current);
+    uploadConsentWarningTimeoutRef.current = setTimeout(() => setUploadConsentWarningVisible(false), 4000);
+  };
+
   // Pre-fills the same state the manual wizard uses — from here on, an
   // uploaded resume and a manually-built one go through the exact same
   // review/edit/save flow. This does autosave the parsed draft (see the
@@ -298,6 +371,9 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   // marks it *completed* until the applicant reaches the end and clicks Save
   // themselves, but leaving a freshly-parsed upload unsaved in memory only
   // meant losing it outright on a refresh before ever reaching that point.
+  // Reads/uploads/parses immediately, not gated on a second confirmation —
+  // consent was already given in the modal above, before the picker even
+  // opened, so there's nothing left to confirm once a file's actually chosen.
   const handleFileSelected = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // lets picking the same file again re-trigger onChange
@@ -497,6 +573,17 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     }
   };
 
+  // True the moment any entry has a real Company or Position typed in —
+  // shared by isStepComplete below and the "no work experience" checkbox,
+  // which auto-unchecks (and refuses to be re-checked) once this is true,
+  // so the saved resume can never claim both "I have no experience" and
+  // list one at the same time.
+  const hasWorkEntry = workExperience.some((e) => e.company.trim() || e.position.trim());
+
+  useEffect(() => {
+    if (hasWorkEntry && noWorkExperience) setNoWorkExperience(false);
+  }, [hasWorkEntry]);
+
   // Steps 0/2/3 have real required-field checks (validateStep), so reuse
   // that directly rather than maintaining a second definition of "done."
   // Steps 1/4/5 have no hard requirement — genuinely optional per this
@@ -507,11 +594,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // Still optional to have zero entries at all (leave blank if a fresh
     // graduate) — but once at least one is started, it also has to pass
     // validateStep's completeness check (start date present) to count.
-    // Real entries win over the checkbox if both are somehow present —
-    // checking "no work experience" doesn't exempt an entry someone
-    // actually started from needing a start date too.
-    const hasRealEntry = workExperience.some((e) => e.company.trim() || e.position.trim());
-    if (i === 1) return hasRealEntry ? !validateStep(1) : noWorkExperience;
+    if (i === 1) return hasWorkEntry ? !validateStep(1) : noWorkExperience;
     if (i === 4) return Boolean(licenseType || yearsDriving !== '' || nbiClearance || willingShifting || medicalCertificate);
     if (i === 5) return certifications.some((c) => c.title.trim()) || summary.trim().length > 0;
     return false;
@@ -620,7 +703,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
   if (checking) {
     return (
       <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} profile={profile} /></div>
+        <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} profile={profile} links={[]} /></div>
         <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}><p>Loading…</p></section>
       </div>
     );
@@ -661,8 +744,16 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
         .resume-step-scroll::-webkit-scrollbar-thumb:hover {
           background: var(--gray-500);
         }
+        .resume-field-input[type="number"]::-webkit-outer-spin-button,
+        .resume-field-input[type="number"]::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .resume-field-input[type="number"] {
+          -moz-appearance: textfield;
+        }
       `}</style>
-      <div style={{ padding: 'clamp(8px, 2vh, 30px) 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} profile={profile} /></div>
+      <div style={{ padding: 'clamp(8px, 2vh, 30px) 60px 0', flexShrink: 0 }} className="page-header-wrap"><Header nav={nav} profile={profile} links={[]} /></div>
       {/* Padding here is deliberately small and vh-aware, not a flat value —
           the card below owns all of its own internal spacing (header/middle/
           footer each pad themselves), so section's own padding is pure
@@ -672,7 +763,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
           force an internal scrollbar that had no business appearing. */}
       <section style={{
         maxWidth: 1065, width: '100%', margin: '0 auto', boxSizing: 'border-box', minHeight: 0,
-        padding: 'clamp(6px, 1.5vh, 20px) 20px',
+        padding: 'clamp(16px, 3.5vh, 40px) 20px',
         flex: 1, display: 'flex', flexDirection: 'column', justifyContent: showChoice ? 'center' : 'flex-start', overflow: 'hidden',
       }}>
         <FadeSection delay={0.1} style={{ maxWidth: 700, width: '100%', margin: '0 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -730,7 +821,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   {reviewing
                     ? 'Double-check everything below before saving — go back to edit anything that looks off.'
                     : isDraft
-                    ? "Welcome back — we picked up right where you left off."
+                    ? "Welcome back, we picked up right where you left off."
                     : "Fill this out once, and our AI will match it against every open position for you, so you don't have to re-enter the same information for each job."}
                 </p>
               </div>
@@ -831,7 +922,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   style={{ display: 'none' }}
                 />
                 <button
-                  onClick={() => !uploading && fileInputRef.current?.click()}
+                  onClick={handleUploadClick}
                   className="hover-lift btn-animate"
                   disabled={uploading}
                   style={{
@@ -865,17 +956,18 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                 <FadeSection delay={0} style={SECTION_STYLE}>
                   <SectionHeader icon={SECTION_ICONS.basic} title="Basic Information" />
                   <div style={GRID_2COL}>
-                    <Input label="First Name:" value={firstName} onChange={(e) => setFirstName(e.target.value)} error={invalidFields.has('firstName')} />
-                    <Input label="Last Name:" value={lastName} onChange={(e) => setLastName(e.target.value)} error={invalidFields.has('lastName')} />
-                    <Input label="Email Address:" type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={invalidFields.has('email')} />
-                    <Input label="Phone Number:" type="tel" placeholder="0912 345 6789" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} error={invalidFields.has('phone')} />
-                    <Input
-                      label="Current Location (City / Province):" value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)}
-                      placeholder="e.g. Quezon City" error={invalidFields.has('currentLocation')}
+                    <ResumeField label="First Name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} error={invalidFields.has('firstName')} onKeyDown={focusNext(lastNameRef)} />
+                    <ResumeField ref={lastNameRef} label="Last Name" required value={lastName} onChange={(e) => setLastName(e.target.value)} error={invalidFields.has('lastName')} onKeyDown={focusNext(emailRef)} />
+                    <ResumeField ref={emailRef} label="Email Address" required icon={MAIL_ICON} type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={invalidFields.has('email')} onKeyDown={focusNext(phoneRef)} />
+                    <ResumeField ref={phoneRef} label="Phone Number" required icon={PHONE_ICON} type="tel" placeholder="0912 345 6789" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} error={invalidFields.has('phone')} onKeyDown={focusNext(locationRef)} />
+                    <ResumeField
+                      ref={locationRef} label="Current Location (City / Province)" required icon={PIN_ICON} value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)}
+                      placeholder="e.g. Quezon City" error={invalidFields.has('currentLocation')} onKeyDown={focusNext(ageRef)}
                     />
-                    <Input
-                      label="Age:" type="number" min="18" max="100" value={age} onChange={(e) => setAge(e.target.value)}
+                    <ResumeField
+                      ref={ageRef} label="Age" required type="number" min="18" max="100" value={age} onChange={(e) => setAge(e.target.value)}
                       error={invalidFields.has('age')}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleNext(); } }}
                     />
                   </div>
                 </FadeSection>
@@ -885,26 +977,65 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                 <>
                   <RepeatableSection
                     title="Work Experience"
-                    hint="Optional — leave this blank if you're a fresh graduate or don't have work experience yet. Just fill in Education instead."
+                    hint="Check the box below if you don't have work experience yet, and fill in Education instead."
                     icon={SECTION_ICONS.experience}
                     delay={0}
                     entries={workExperience}
                     fields={[
-                      { key: 'company', label: 'Company:' },
-                      { key: 'position', label: 'Position:' },
-                      { key: 'startDate', label: 'Start Date:', type: 'date' },
-                      { key: 'endDate', label: 'End Date (leave blank if current):', type: 'date' },
+                      { key: 'company', label: 'Company:', wide: true, required: true },
+                      { key: 'position', label: 'Position:', wide: true, required: true },
+                      { key: 'startDate', label: 'Start Date:', type: 'date', required: true },
+                      { key: 'endDate', label: 'End Date:', type: 'date', hint: 'Leave blank if current' },
                       { key: 'description', label: 'Description:', type: 'textarea', placeholder: 'e.g. Drove provincial routes, maintained zero at-fault accidents, assisted passengers with special needs' },
                     ]}
                     onChange={updateEntry(setWorkExperience)}
                     onAdd={addEntry(setWorkExperience, EMPTY_EXPERIENCE)}
                     onRemove={removeEntry(setWorkExperience)}
                     addLabel="+ Add Work Experience"
+                    summary={(e) => ({
+                      primary: e.position || 'Position',
+                      secondary: [e.company, e.startDate ? `${e.startDate} to ${e.endDate || 'Present'}` : null].filter(Boolean).join(' • '),
+                    })}
                   />
-                  <label style={{ display: 'flex', gap: 10, fontSize: 'var(--text-sm)', alignItems: 'center', marginTop: 18 }}>
-                    <input type="checkbox" checked={noWorkExperience} onChange={(e) => setNoWorkExperience(e.target.checked)} />
-                    I'm a fresh graduate / I have no work experience
-                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 18 }}>
+                    <label
+                      key={noExpWarning}
+                      className={noExpWarning > 0 && hasWorkEntry ? 'shake-row' : undefined}
+                      style={{
+                        display: 'flex', gap: 10, fontSize: 'var(--text-sm)', alignItems: 'center',
+                        opacity: hasWorkEntry ? 0.5 : 1, cursor: hasWorkEntry ? 'not-allowed' : 'pointer', width: 'fit-content',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={noWorkExperience}
+                        style={{ cursor: hasWorkEntry ? 'not-allowed' : 'pointer' }}
+                        onChange={(e) => {
+                          // Not a native `disabled` input on purpose — that
+                          // would swallow the click entirely, and there'd be
+                          // no way to tell the applicant *why* nothing
+                          // happened. This still looks and acts disabled,
+                          // it just rejects the click with a reason instead
+                          // of silently ignoring it.
+                          if (hasWorkEntry) {
+                            setNoExpWarning((n) => n + 1);
+                            setNoExpWarningVisible(true);
+                            // Repeated clicks reset the clock rather than
+                            // stacking timeouts — each one gets its own full
+                            // 4s to actually be read.
+                            clearTimeout(noExpWarningTimeoutRef.current);
+                            noExpWarningTimeoutRef.current = setTimeout(() => setNoExpWarningVisible(false), 4000);
+                            return;
+                          }
+                          setNoWorkExperience(e.target.checked);
+                        }}
+                      />
+                      I'm a fresh graduate / I have no work experience
+                    </label>
+                    {noExpWarningVisible && hasWorkEntry && (
+                      <FormError message="You already added a work experience above, remove it first if you want to mark yourself as having none." />
+                    )}
+                  </div>
                 </>
               )}
 
@@ -912,8 +1043,9 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                 <>
                   <FadeSection delay={0} style={SECTION_STYLE}>
                     <SectionHeader icon={SECTION_ICONS.education} title="Highest Educational Attainment" />
-                    <Select
-                      label="Highest Educational Attainment:"
+                    <ResumeSelect
+                      label="Highest Educational Attainment"
+                      required
                       value={educationLevel}
                       onChange={(e) => setEducationLevel(e.target.value)}
                       options={EDUCATION_LEVELS}
@@ -927,14 +1059,18 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     delay={0.06}
                     entries={education}
                     fields={[
-                      { key: 'school', label: 'School:' },
-                      { key: 'degree', label: 'Degree / Course:' },
+                      { key: 'school', label: 'School:', wide: true, required: true },
+                      { key: 'degree', label: 'Degree / Course:', wide: true, required: true },
                       { key: 'yearGraduated', label: 'Year Graduated:' },
                     ]}
                     onChange={updateEntry(setEducation)}
                     onAdd={addEntry(setEducation, EMPTY_EDUCATION)}
                     onRemove={removeEntry(setEducation)}
                     addLabel="+ Add Education"
+                    summary={(e) => ({
+                      primary: e.degree || 'Degree / Course',
+                      secondary: [e.school, e.yearGraduated].filter(Boolean).join(' • '),
+                    })}
                   />
                 </>
               )}
@@ -943,11 +1079,12 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                 <FadeSection delay={0} style={SECTION_STYLE}>
                   <SectionHeader icon={SECTION_ICONS.skills} title="Skills" />
                   <TagInput
-                    label="Skills:"
+                    label="Skills"
+                    required
                     values={skills}
                     onChange={setSkills}
-                    placeholder="Type a skill and press Enter — e.g. Customer Service, Defensive Driving"
-                    hint="Press Enter or comma after each skill so it becomes its own tag — or paste a comma-separated list from an old resume."
+                    placeholder="Type a skill and press Enter, e.g. Customer Service, Defensive Driving"
+                    hint="Press Enter or comma after each skill so it becomes its own tag, or paste a comma-separated list from an old resume."
                     error={invalidFields.has('skills')}
                   />
                 </FadeSection>
@@ -958,22 +1095,22 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   <FadeSection delay={0} style={SECTION_STYLE}>
                     <SectionHeader
                       icon={SECTION_ICONS.driving}
-                      title="Driving Qualifications (if applicable)"
-                      hint="Only fill this in if you hold a driver's license — skip it otherwise."
+                      title="Driving Qualifications"
+                      hint="Only fill this in if you hold a driver's license, skip it otherwise."
                     />
                     <div style={GRID_2COL}>
-                      <Select
-                        label="Driver's License Type:"
+                      <ResumeSelect
+                        label="Driver's License Type"
                         value={licenseType}
                         onChange={(e) => setLicenseType(e.target.value)}
                         options={['Non-Professional', 'Professional']}
                         placeholder="Select license type (optional)"
                       />
-                      <Input label="Years of Driving Experience:" type="number" min="0" value={yearsDriving} onChange={(e) => setYearsDriving(e.target.value)} />
+                      <ResumeField label="Years of Driving Experience" type="number" min="0" value={yearsDriving} onChange={(e) => setYearsDriving(e.target.value)} />
                     </div>
                     {licenseType && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <span style={{ fontSize: 'var(--text-sm)' }}>License Restriction Codes:</span>
+                        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--text-primary)', opacity: 0.7 }}>License Restriction Codes</span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                           {LICENSE_RESTRICTION_CODES.map(({ code, label }) => {
                             const active = licenseRestrictions.includes(code);
@@ -1026,7 +1163,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     delay={0}
                     entries={certifications}
                     fields={[
-                      { key: 'title', label: 'Title:' },
+                      { key: 'title', label: 'Title:', wide: true, required: true },
                       { key: 'issuer', label: 'Issuer:' },
                       { key: 'year', label: 'Year:' },
                     ]}
@@ -1034,10 +1171,23 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     onAdd={addEntry(setCertifications, EMPTY_CERTIFICATION)}
                     onRemove={removeEntry(setCertifications)}
                     addLabel="+ Add Certification"
+                    summary={(c) => ({
+                      primary: c.title || 'Certification',
+                      secondary: [c.issuer, c.year].filter(Boolean).join(' • '),
+                    })}
                   />
                   <FadeSection delay={0.06} style={SECTION_STYLE}>
-                    <SectionHeader icon={SECTION_ICONS.note} title="Professional Summary (optional)" hint="A short intro about yourself — not tied to any one job." />
-                    <textarea value={summary} onChange={(e) => setSummary(e.target.value)} style={{ ...FIELD_STYLE, minHeight: 80, resize: 'vertical' }} />
+                    <SectionHeader icon={SECTION_ICONS.note} title="Professional Summary (optional)" hint="A short intro about yourself, not tied to any one job." />
+                    <textarea
+                      ref={autoResizeTextarea}
+                      value={summary}
+                      onChange={(e) => { setSummary(e.target.value); autoResizeTextarea(e.target); }}
+                      style={{
+                        minHeight: 80, width: '100%', boxSizing: 'border-box', padding: '12px 16px', resize: 'none', overflow: 'hidden',
+                        background: 'var(--surface-field)', border: '1px solid var(--border-hairline)', borderRadius: 10,
+                        fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', color: 'var(--text-primary)',
+                      }}
+                    />
                   </FadeSection>
                 </>
               )}
@@ -1062,7 +1212,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     </Button>
                   ) : step < LAST_STEP ? (
                     <Button variant="strong" size="lg" onClick={handleNext} style={{ width: 'auto', flex: 1 }}>
-                      Next
+                      Next &rarr;
                     </Button>
                   ) : (
                     <Button variant="strong" size="lg" onClick={handleReview} style={{ width: 'auto', flex: 1 }}>
@@ -1075,6 +1225,44 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
           </div>
         </FadeSection>
       </section>
+
+      {/* Rendered outside the wizard card's own FadeSection on purpose — that
+          section's entrance animation leaves a lingering `transform` on
+          itself even after it finishes (animation-fill-mode: both, see
+          .fade-in-up in styles.css), and a `position: fixed` modal nested
+          inside a transformed ancestor gets positioned/clipped relative to
+          THAT ancestor instead of the real viewport, not centered over the
+          whole page like it's supposed to be. */}
+      <ConfirmModal
+        open={showUploadConsent}
+        title="Extract My Resume Details"
+        message="Once you pick a PDF or Word file, we'll read it and automatically fill in your name, contact details, work experience, education, skills, and certifications below. You can review and edit everything before saving, and nothing is saved until then."
+        confirmLabel="Accept & Choose File"
+        cancelLabel="Decline"
+        confirmDisabled={!uploadConsentChecked}
+        onConfirm={handleAcceptUploadConsent}
+        onConfirmBlocked={handleBlockedUploadConsent}
+        onCancel={handleDeclineUploadConsent}
+      >
+        <label
+          key={uploadConsentWarning}
+          className={uploadConsentWarning > 0 && !uploadConsentChecked ? 'shake-row' : undefined}
+          style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 'var(--text-sm)', cursor: 'pointer' }}
+        >
+          <input
+            type="checkbox"
+            checked={uploadConsentChecked}
+            onChange={(e) => setUploadConsentChecked(e.target.checked)}
+            style={{ marginTop: 3, flexShrink: 0 }}
+          />
+          <span>I give my confirmation and accept that Victory Liner Careers may extract this information from my uploaded file.</span>
+        </label>
+        {uploadConsentWarningVisible && !uploadConsentChecked && (
+          <div style={{ marginTop: 10 }}>
+            <FormError message="Check the box above to continue — we need your confirmation before reading your file." />
+          </div>
+        )}
+      </ConfirmModal>
     </div>
   );
 }

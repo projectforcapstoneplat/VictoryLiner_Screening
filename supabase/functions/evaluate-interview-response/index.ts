@@ -24,10 +24,7 @@ import { callGemini } from '../_shared/gemini.ts';
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
 // once you have one, to stop other sites' browsers from being able to call this.
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -36,7 +33,16 @@ const EVALUATION_SCHEMA = {
   type: 'OBJECT',
   properties: {
     transcript: { type: 'STRING', description: 'Best-effort verbatim transcript of what the applicant said.' },
-    sentimentLabel: { type: 'STRING', description: 'One of: positive, neutral, negative — overall tone of the answer.' },
+    sentimentLabel: {
+      type: 'STRING',
+      description:
+        'One of: positive, neutral, negative — overall tone of the delivery, not whether the content itself was ' +
+        'correct. positive = confident, engaged, enthusiastic delivery. neutral = flat, businesslike, or hesitant ' +
+        'delivery that is still cooperative and professional — this is the default for a plain, matter-of-fact ' +
+        'answer with nothing notably enthusiastic or wrong about it. negative = frustrated, dismissive, defensive, ' +
+        'sarcastic, or visibly uncomfortable/unwilling delivery, or a refusal to genuinely engage with the ' +
+        'question.',
+    },
     sentimentScore: { type: 'INTEGER', description: '0-100, how strongly the answer expresses that tone (confidence/enthusiasm vs flat/hesitant).' },
     relevanceScore: { type: 'INTEGER', description: '0-100, how directly and appropriately the answer addresses the question asked.' },
     score: { type: 'INTEGER', description: 'Overall 0-100 score for this answer for hiring purposes, weighing relevance most heavily.' },
@@ -50,11 +56,25 @@ const SYSTEM_PROMPT =
   'applicant answering a single interview question. First transcribe their spoken answer as accurately as ' +
   'possible. Then assess the tone/sentiment of their delivery, how relevant and appropriate the content of the ' +
   'answer is to the question asked, and give an overall score for hiring purposes. Be specific in your ' +
-  "explanation — cite what the applicant actually said, don't just restate the question.";
+  "explanation — cite what the applicant actually said, don't just restate the question. The applicant may " +
+  'answer in English, Tagalog, or Taglish (a natural mix of both, since the app itself offers a Taglish ' +
+  'translation of each question) — judge only the content and delivery of the answer. Do not score an answer ' +
+  'lower, or note it as a weakness, because of which language or mix of languages the applicant chose to ' +
+  'answer in. Most calm, professional answers should be "neutral," not "positive" — reserve "positive" for ' +
+  'delivery that is genuinely confident or enthusiastic, and "negative" for delivery that is frustrated, ' +
+  'dismissive, or visibly unwilling, not just a plain or unremarkable answer.';
 
 const SENTIMENT_LABELS = ['positive', 'neutral', 'negative'];
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -192,11 +212,4 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
   return btoa(binary);
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
 }

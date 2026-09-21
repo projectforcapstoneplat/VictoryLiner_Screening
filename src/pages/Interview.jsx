@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
+import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
@@ -13,6 +14,7 @@ import { evaluateResponse } from '../lib/interviewEvaluation.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
 import { MAX_ATTEMPTS } from '../lib/interviewConstants.js';
+import { measureDownloadSpeedMbps, classifySpeed } from '../lib/connectionSpeed.js';
 
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
@@ -33,11 +35,11 @@ const INFO_ICONS = {
 // rule, etc.). Applicants now have to actually pass through this as its own
 // screen before the camera check even loads, see InterviewInstructions below.
 const INTERVIEW_INSTRUCTIONS = [
-  { icon: 'eye', title: 'Questions stay hidden until you click Start', body: 'This keeps things fair for every applicant — nobody gets extra time to prepare or look up an answer beforehand.' },
+  { icon: 'eye', title: 'Questions stay hidden until you click Start', body: 'This keeps things fair for every applicant: nobody gets extra time to prepare or look up an answer beforehand.' },
   { icon: 'clock', title: '5 seconds to prepare, then 1 minute to answer', body: 'Once you click Start, a short countdown gives you a moment to get ready before recording begins automatically.' },
-  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record — before or after submitting — up to 3 times total for that one question.' },
+  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record, before or after submitting, up to 3 times total for that one question.' },
   { icon: 'camera', title: "We'll check your camera & mic first", body: "Right after this, you'll confirm HR can actually see and hear you before any question starts recording." },
-  { icon: 'check', title: 'Once every question is submitted, HR reviews it', body: "There's no editing an answer after that — take your time on each take before hitting Submit." },
+  { icon: 'check', title: 'Once every question is submitted, HR reviews it', body: "There's no editing an answer after that, so take your time on each take before hitting Submit." },
 ];
 
 // A gate, not just information — the applicant has to click through this
@@ -45,14 +47,34 @@ const INTERVIEW_INSTRUCTIONS = [
 // timing, attempt limits) are seen once, deliberately, instead of sitting in
 // a paragraph easy to skip past on the way to starting.
 function InterviewInstructions({ onContinue }) {
+  // Video is optional, not a hard requirement — a walkthrough covering the
+  // same points as the bullets below (the text is a lot to take in as a
+  // wall of bullets). Points at a static file path
+  // (public/videos/interview-instructions.mp4); onError hides the player so
+  // a missing file never shows up as a broken box, it just silently falls
+  // back to text-only.
+  const [videoAvailable, setVideoAvailable] = useState(true);
+
   return (
     <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 5vw, 48px)', display: 'flex', flexDirection: 'column', gap: 26, alignItems: 'center' }}>
       <div style={{ textAlign: 'center', maxWidth: 520 }}>
-        <strong style={{ fontSize: 'var(--text-xl)' }}>Before You Start — How This Works</strong>
+        <strong style={{ fontSize: 'var(--text-xl)' }}>Before You Start: How This Works</strong>
         <p style={{ margin: '8px 0 0', fontSize: 'var(--text-sm)', opacity: 0.7 }}>
-          Please read through this once — it covers everything you need to know so nothing catches you off guard mid-question.
+          {videoAvailable
+            ? 'Watch the short walkthrough below, or read through the points underneath. Either way, it covers everything you need to know so nothing catches you off guard mid-question.'
+            : 'Read through the points below. It covers everything you need to know so nothing catches you off guard mid-question.'}
         </p>
       </div>
+      {videoAvailable && (
+        <video
+          controls
+          preload="metadata"
+          onError={() => setVideoAvailable(false)}
+          style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--radius-sm)', background: '#000' }}
+        >
+          <source src="/videos/interview-instructions.mp4" type="video/mp4" />
+        </video>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: 560 }}>
         {INTERVIEW_INSTRUCTIONS.map((item) => (
           <div key={item.title} style={{ display: 'flex', gap: 16, alignItems: 'flex-start', textAlign: 'left' }}>
@@ -66,7 +88,7 @@ function InterviewInstructions({ onContinue }) {
           </div>
         ))}
       </div>
-      <Button variant="strong" size="md" onClick={onContinue} style={{ width: 'auto', minWidth: 260 }}>I Understand — Continue</Button>
+      <Button variant="strong" size="md" onClick={onContinue} style={{ width: 'auto', minWidth: 260 }}>I Understand, Continue</Button>
     </div>
   );
 }
@@ -83,15 +105,15 @@ function formatTime(totalSeconds) {
 // all, so a blocked/flaky connection is a very plausible real-world cause.
 function transcriptFallbackMessage(errorCode) {
   if (errorCode === 'network') {
-    return "Couldn't reach the transcript service (needs an internet connection) — doesn't affect your submission.";
+    return "Couldn't reach the transcript service (needs an internet connection). Doesn't affect your submission.";
   }
   if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
-    return "Transcript preview needs microphone permission for this site — doesn't affect your submission.";
+    return "Transcript preview needs microphone permission for this site. Doesn't affect your submission.";
   }
   if (errorCode === 'audio-capture') {
-    return "Couldn't read your microphone for the transcript preview — doesn't affect your submission.";
+    return "Couldn't read your microphone for the transcript preview. Doesn't affect your submission.";
   }
-  return "We couldn't make out a clear transcript for this take — doesn't affect your submission.";
+  return "We couldn't make out a clear transcript for this take. Doesn't affect your submission.";
 }
 
 // The "get ready" countdown used to be a plain sentence — a ring reads at a
@@ -183,7 +205,7 @@ function MicLevelMeter({ stream, onConfirmed }) {
         )}
       </div>
       <div style={{ fontSize: 'var(--text-xs)', opacity: 0.7, marginTop: 6, color: good ? '#1a7f37' : 'inherit' }}>
-        {confirmedRef.current ? 'Mic is picking up sound ✓' : 'Say something out loud — this bar should move'}
+        {confirmedRef.current ? 'Mic is picking up sound ✓' : 'Say something out loud, this bar should move'}
       </div>
     </div>
   );
@@ -229,10 +251,10 @@ function LightingMeter({ videoRef, onStatusChange }) {
   let color = 'inherit';
   if (brightness !== null) {
     if (brightness < 55) {
-      label = 'Too dark — try facing a light source';
+      label = 'Too dark, try facing a light source';
       color = 'var(--red-700)';
     } else if (brightness > 220) {
-      label = 'Too bright — reduce glare or backlight';
+      label = 'Too bright, reduce glare or backlight';
       color = 'var(--red-700)';
     } else {
       label = 'Lighting looks good ✓';
@@ -248,12 +270,102 @@ function LightingMeter({ videoRef, onStatusChange }) {
   );
 }
 
+const RETRY_ICON = <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>;
+
+const SPEED_TIER_COPY = {
+  good: { label: 'Good connection', color: '#1a7f37' },
+  fair: { label: 'Okay connection', color: '#9a6b00', warning: 'Uploads might take a little longer than usual.' },
+  poor: { label: 'Slow connection', color: 'var(--red-700)', warning: 'Uploads may take a while or fail. Try moving closer to your router or switching networks.' },
+};
+
+// Same visual language as MicLevelMeter/LightingMeter next to it (label row,
+// then a status line), but this one can't be a continuous live reading the
+// way mic level or on-screen lighting can — it's a single timed download,
+// so it needs its own explicit "Test again" instead of just always being
+// current. Deliberately doesn't feed into DeviceCheck's `ready` gate the way
+// the mic/lighting checks do — those two block Continue because they're
+// fixable in the moment (face a light, speak up); a slow connection often
+// isn't fixable on the spot, so this warns instead of blocking.
+function ConnectionSpeedMeter() {
+  const [status, setStatus] = useState('testing'); // testing | done | error
+  const [mbps, setMbps] = useState(null);
+  const [error, setError] = useState('');
+
+  const runTest = useCallback(() => {
+    setStatus('testing');
+    setError('');
+    measureDownloadSpeedMbps().then((result) => {
+      if (result.error) {
+        setError(result.error);
+        setStatus('error');
+        return;
+      }
+      setMbps(result.mbps);
+      setStatus('done');
+    });
+  }, []);
+
+  useEffect(() => {
+    runTest();
+  }, [runTest]);
+
+  const tier = status === 'done' ? classifySpeed(mbps) : null;
+  const tierCopy = tier ? SPEED_TIER_COPY[tier] : null;
+  const color = status === 'error' ? 'var(--red-700)' : (tierCopy?.color || 'inherit');
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600 }}>Internet</span>
+        {status === 'done' && mbps !== null && (
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>~{mbps < 1 ? mbps.toFixed(2) : mbps.toFixed(1)} Mbps</span>
+        )}
+      </div>
+      <div style={{ height: 10, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
+        <div
+          style={{
+            height: '100%',
+            width: status === 'testing' ? '35%' : '100%',
+            background: status === 'testing' ? 'var(--gray-400)' : color,
+            transition: 'width 0.3s ease, background 0.3s ease',
+          }}
+          className={status === 'testing' ? 'interview-ring-pulse' : undefined}
+        />
+      </div>
+      <div style={{ fontSize: 'var(--text-xs)', marginTop: 6, color: status === 'done' ? color : 'inherit', opacity: status === 'done' ? 1 : 0.7 }}>
+        {status === 'testing' && 'Testing your connection…'}
+        {status === 'done' && tierCopy && `${tierCopy.label} ✓`}
+        {status === 'error' && "Couldn't measure, you can still continue"}
+      </div>
+      {status === 'done' && tierCopy?.warning && (
+        <div style={{ fontSize: 'var(--text-xs)', opacity: 0.65, marginTop: 3 }}>{tierCopy.warning}</div>
+      )}
+      {status !== 'testing' && (
+        <button
+          type="button"
+          onClick={runTest}
+          className="btn-animate"
+          style={{
+            marginTop: 7, display: 'inline-flex', alignItems: 'center', gap: 4,
+            background: 'var(--pink-100)', border: 'none', borderRadius: 999, padding: '3px 10px',
+            fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--action-primary-bg)', cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >
+          {RETRY_ICON} Test again
+        </button>
+      )}
+    </div>
+  );
+}
+
 // One-time gate before the question list — confirms camera, mic, and
 // lighting all work before the applicant starts an actual timed answer,
 // instead of finding out mid-question. "Continue" is genuinely disabled
 // until both the lighting and mic checks below actually pass, not just
 // once a camera/mic stream exists — a granted permission proves a device is
-// plugged in, not that HR will be able to see or hear this person.
+// plugged in, not that HR will be able to see or hear this person. The
+// connection meter sits alongside them for visibility but, unlike those
+// two, doesn't gate Continue (see ConnectionSpeedMeter's comment).
 //
 // `stream` is owned by Interview (the parent), not this component — it's
 // the same MediaStream that keeps flowing into every question afterward, so
@@ -266,6 +378,17 @@ function LightingMeter({ videoRef, onStatusChange }) {
 function DeviceCheck({ stream, error, videoRef, onContinue }) {
   const [lightingOk, setLightingOk] = useState(false);
   const [micConfirmed, setMicConfirmed] = useState(false);
+  // Continue isn't a native `disabled` button on purpose — that would
+  // swallow the click entirely, leaving the applicant with no idea why
+  // nothing happened. It still looks and acts disabled, it just rejects the
+  // click with a reason instead of silently ignoring it (same pattern as the
+  // "no work experience" checkbox in ResumeForm.jsx). `lockWarning` is a
+  // counter, not a boolean, so the shake replays on every repeat click, not
+  // just the first.
+  const [lockWarning, setLockWarning] = useState(0);
+  const [lockWarningVisible, setLockWarningVisible] = useState(false);
+  const lockWarningTimeoutRef = useRef(null);
+  useEffect(() => () => clearTimeout(lockWarningTimeoutRef.current), []);
 
   const handleLightingStatus = useCallback((ok) => setLightingOk(ok), []);
   const handleMicConfirmed = useCallback(() => setMicConfirmed(true), []);
@@ -276,33 +399,53 @@ function DeviceCheck({ stream, error, videoRef, onContinue }) {
 
   const ready = Boolean(stream) && lightingOk && micConfirmed;
 
+  const lockReason = !stream
+    ? (error || 'Your camera and microphone have not connected yet.')
+    : !lightingOk && !micConfirmed
+      ? 'Waiting on good lighting and a mic check: say something out loud and face a light source.'
+      : !lightingOk
+        ? 'Waiting on lighting to look good: face a light source.'
+        : 'Waiting on your mic: say something out loud.';
+
+  const handleContinueClick = () => {
+    if (!ready) {
+      setLockWarning((n) => n + 1);
+      setLockWarningVisible(true);
+      clearTimeout(lockWarningTimeoutRef.current);
+      lockWarningTimeoutRef.current = setTimeout(() => setLockWarningVisible(false), 4000);
+      return;
+    }
+    onContinue();
+  };
+
   return (
     <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(18px, 3vw, 28px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      <div style={{ textAlign: 'center', maxWidth: 420 }}>
-        <strong style={{ fontSize: 'var(--text-lg)' }}>Check Your Camera &amp; Mic</strong>
+      <div style={{ textAlign: 'center', maxWidth: 460 }}>
+        <strong style={{ fontSize: 'var(--text-lg)' }}>Check Your Camera, Mic &amp; Connection</strong>
         <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
           Before you start, make sure HR can clearly see and hear you. Face a light source and say something out loud to test your mic.
         </p>
       </div>
       {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-sm)' }}>{error}</div>}
       {stream && (
-        <div style={{ width: '100%', maxWidth: 420, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ width: '100%', maxWidth: 460, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000' }} />
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', textAlign: 'left' }}>
-            <div style={{ flex: 1, minWidth: 180 }}><MicLevelMeter stream={stream} onConfirmed={handleMicConfirmed} /></div>
-            <div style={{ flex: 1, minWidth: 180 }}><LightingMeter videoRef={videoRef} onStatusChange={handleLightingStatus} /></div>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', textAlign: 'left' }}>
+            <div style={{ flex: '1 1 130px', minWidth: 130 }}><MicLevelMeter stream={stream} onConfirmed={handleMicConfirmed} /></div>
+            <div style={{ flex: '1 1 130px', minWidth: 130 }}><LightingMeter videoRef={videoRef} onStatusChange={handleLightingStatus} /></div>
+            <div style={{ flex: '1 1 130px', minWidth: 130 }}><ConnectionSpeedMeter /></div>
           </div>
         </div>
       )}
-      <Button variant="strong" size="sm" onClick={onContinue} disabled={!ready}>Continue to Questions</Button>
-      {stream && !ready && (
-        <p style={{ margin: 0, fontSize: 'var(--text-xs)', opacity: 0.6, textAlign: 'center' }}>
-          {!lightingOk && !micConfirmed
-            ? "Waiting on good lighting and a mic check — say something out loud and face a light source."
-            : !lightingOk
-              ? 'Waiting on lighting to look good — face a light source.'
-              : 'Waiting on your mic — say something out loud.'}
-        </p>
+      <span key={lockWarning} className={lockWarning > 0 && !ready ? 'shake-row' : undefined}>
+        <Button variant="strong" size="sm" onClick={handleContinueClick} style={!ready ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
+          Continue to Questions
+        </Button>
+      </span>
+      {lockWarningVisible && !ready && (
+        <div style={{ width: '100%', maxWidth: 420 }}>
+          <FormError message={lockReason} />
+        </div>
       )}
     </div>
   );
@@ -324,7 +467,7 @@ function DeviceCheck({ stream, error, videoRef, onContinue }) {
 // check's own video occupied the instant before it unmounted — used to
 // animate this question's video in from that exact spot instead of it just
 // appearing already relocated.
-function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, stream, flipFromRect, onSubmitted, onAutoAdvance }) {
+function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, stream, flipFromRect, taglish, onSubmitted, onAutoAdvance }) {
   const [mode, setMode] = useState(response.video_path ? 'submitted' : 'locked');
   const [revealed, setRevealed] = useState(!!response.video_path);
   const [recordedBlob, setRecordedBlob] = useState(null);
@@ -332,10 +475,6 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   const [uploading, setUploading] = useState(false);
   const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
   const [recordSecondsLeft, setRecordSecondsLeft] = useState(RECORD_SECONDS);
-  const [taglish, setTaglish] = useState(null);
-  const [showTaglish, setShowTaglish] = useState(false);
-  const [translating, setTranslating] = useState(false);
-  const [translateError, setTranslateError] = useState('');
   const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
   // True only for the brief window while the attempt count is being
   // persisted server-side, before the countdown/recording UI appears at
@@ -617,7 +756,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     const { error: attemptError } = await recordAttempt(applicationId, response.question_id, nextAttempt);
     setStartingAttempt(false);
     if (attemptError) {
-      setError('Could not start this attempt — check your connection and try again.');
+      setError('Could not start this attempt. Check your connection and try again.');
       return;
     }
     setAttemptCount(nextAttempt);
@@ -653,8 +792,6 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     if (attemptCount >= MAX_ATTEMPTS) return;
     setError('');
     setRecordedBlob(null);
-    setTaglish(null);
-    setShowTaglish(false);
     setLiveTranscript('');
     setTranscriptAttempted(false);
     beginCountdown();
@@ -723,28 +860,10 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     setRecovery(null);
   };
 
-  const handleTranslate = async () => {
-    if (taglish) {
-      setShowTaglish((v) => !v);
-      return;
-    }
-    setTranslating(true);
-    setTranslateError('');
-    const { data, error: tError } = await translateToTaglish(response.question_text_snapshot || response.interview_questions?.question_text || '');
-    setTranslating(false);
-    if (tError) {
-      setTranslateError(tError);
-      return;
-    }
-    setTaglish(data);
-    setShowTaglish(true);
-  };
-
   // The snapshot taken when this question was assigned — not the live
   // question bank, so this applicant sees the exact wording they were
   // actually given even if HR edits the question afterward.
   const questionText = response.question_text_snapshot || response.interview_questions?.question_text;
-  const displayedQuestion = showTaglish && taglish ? taglish : questionText;
   const attemptsLeft = MAX_ATTEMPTS - attemptCount;
   const atAttemptLimit = attemptCount >= MAX_ATTEMPTS;
 
@@ -753,7 +872,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
       <ConfirmModal
         open={showLastAttemptConfirm}
         title="Last Attempt"
-        message={`This is your last attempt for this question (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}) — once you record it, it submits automatically and you move on to the next question.`}
+        message={`This is your last attempt for this question (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}). Once you record it, it submits automatically and you move on to the next question.`}
         confirmLabel="Start Recording"
         cancelLabel="Not Yet"
         onConfirm={() => { setShowLastAttemptConfirm(false); startAttempt(); }}
@@ -836,14 +955,17 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
             <div>
               <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
               {transcriptAttempted && (
-                <div style={{ marginTop: 10, background: 'var(--surface-page-alt)', borderRadius: 8, padding: '12px 14px' }}>
-                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, opacity: 0.65 }}>
-                    What we heard (auto-generated — for your reference only, not what HR sees)
+                <div style={{ marginTop: 12, background: 'var(--surface-page-alt)', borderRadius: 10, padding: '16px 18px' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    What we heard
+                  </div>
+                  <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55, marginTop: 3 }}>
+                    Auto-generated, for your reference only, not what HR sees
                   </div>
                   {liveTranscript ? (
-                    <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', fontStyle: 'italic' }}>&ldquo;{liveTranscript}&rdquo;</p>
+                    <p style={{ margin: '10px 0 0', fontSize: 'var(--text-md)', lineHeight: 1.6, fontStyle: 'italic' }}>&ldquo;{liveTranscript}&rdquo;</p>
                   ) : (
-                    <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.6 }}>{transcriptFallbackMessage(transcriptErrorCode)}</p>
+                    <p style={{ margin: '10px 0 0', fontSize: 'var(--text-md)', lineHeight: 1.6, opacity: 0.6 }}>{transcriptFallbackMessage(transcriptErrorCode)}</p>
                   )}
                 </div>
               )}
@@ -866,7 +988,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
             ) : (
               <>
                 <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0, opacity: 0.6, fontStyle: 'italic' }}>
-                  This question stays hidden until you start — that keeps things fair for every applicant.
+                  This question stays hidden until you start, that keeps things fair for every applicant.
                 </p>
                 {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
                 <Button variant="strong" size="sm" onClick={beginCountdown} disabled={!stream || !!recovery || startingAttempt}>
@@ -876,14 +998,27 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
             )
           ) : (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+              <div style={{ marginBottom: 8 }}>
                 <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Attempt {Math.min(attemptCount, MAX_ATTEMPTS)} of {MAX_ATTEMPTS}</span>
-                <Button variant="ghost" size="sm" onClick={handleTranslate} disabled={translating}>
-                  {translating ? 'Translating…' : showTaglish ? 'Show Original' : '🌐 Translate to Taglish'}
-                </Button>
               </div>
-              <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginTop: 0 }}>{displayedQuestion}</p>
-              {translateError && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 8 }}>{translateError}</div>}
+              {/* Taglish sits in parentheses right under the English text
+                  instead of behind a "Translate" toggle — that toggle used
+                  to make a live Gemini call the moment it was clicked, right
+                  as the timed countdown/recording window was starting, which
+                  is exactly the wrong time to make an applicant wait on an
+                  AI call. The translation is prefetched by Interview (the
+                  parent) for every assigned question before this screen is
+                  ever reachable, so it's either already here or it silently
+                  never shows — never a mid-question wait either way. */}
+              <p style={{ fontSize: 'var(--text-md)', fontWeight: 600, lineHeight: 1.5, margin: 0 }}>{questionText}</p>
+              {taglish && (
+                <div style={{ marginTop: 12, marginBottom: 10, background: 'var(--surface-page-alt)', borderRadius: 10, padding: '16px 18px' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Taglish
+                  </div>
+                  <p style={{ margin: '10px 0 0', fontSize: 'var(--text-md)', lineHeight: 1.6 }}>{taglish}</p>
+                </div>
+              )}
               {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
 
               {mode === 'submitted' && (
@@ -902,7 +1037,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
                   <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
                   {atAttemptLimit ? (
                     <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>
-                      {uploading ? 'Submitting your final attempt…' : `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}) — submitting automatically and moving on…`}
+                      {uploading ? 'Submitting your final attempt…' : `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}), submitting automatically and moving on…`}
                     </span>
                   ) : (
                     <Button variant="outline" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>
@@ -932,9 +1067,9 @@ function InterviewComplete({ nav }) {
       </div>
       <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, margin: 0 }}>You're All Done!</h2>
       <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, maxWidth: 420, margin: 0 }}>
-        Every question has been answered and submitted. HR will review your interview along with your application — no further action needed from you.
+        Every question has been answered and submitted. HR will review your interview along with your application, no further action needed from you.
       </p>
-      <Button variant="strong" size="sm" onClick={() => nav('my-applications')}>Back to My Applications</Button>
+      <Button variant="strong" size="sm" onClick={() => nav('my-applications')}>Back to My Application</Button>
     </Reveal>
   );
 }
@@ -944,6 +1079,16 @@ export function Interview({ application, profile, nav }) {
   const [loadError, setLoadError] = useState('');
   const [instructionsAcknowledged, setInstructionsAcknowledged] = useState(false);
   const [deviceCheckPassed, setDeviceCheckPassed] = useState(false);
+  // Prefetched the moment questions are assigned — well before the
+  // applicant ever reaches a Start button, while they're still clicking
+  // through Instructions/Connection-Device-Check — so by the time a
+  // question actually reveals, its Taglish text (if any) is already sitting
+  // here, ready to show inline. Keyed by question_id, not response id, since
+  // the cache on the server side (interview_questions.question_text_taglish)
+  // is keyed the same way. Best-effort: a missing/failed entry just means
+  // that question shows English-only, never blocks anything.
+  const [taglishMap, setTaglishMap] = useState({});
+  const taglishPrefetchedRef = useRef(false);
   // One question shown at a time instead of the whole list at once — starts
   // on whichever question isn't submitted yet, not always question 1, so
   // resuming later (or after a reroll elsewhere) lands somewhere useful
@@ -1023,6 +1168,18 @@ export function Interview({ application, profile, nav }) {
     setCurrentIndex(firstUnsubmitted === -1 ? 0 : firstUnsubmitted);
   }, [responses]);
 
+  useEffect(() => {
+    if (taglishPrefetchedRef.current || !responses || responses.length === 0) return;
+    taglishPrefetchedRef.current = true;
+    responses.forEach((r) => {
+      const questionText = r.question_text_snapshot || r.interview_questions?.question_text || '';
+      if (!questionText) return;
+      translateToTaglish(questionText, r.question_id).then(({ data }) => {
+        if (data) setTaglishMap((m) => ({ ...m, [r.question_id]: data }));
+      });
+    });
+  }, [responses]);
+
   const handleSubmitted = (updated) => {
     setResponses((rs) => {
       const next = rs.map((r) => (r.question_id === updated.question_id ? updated : r));
@@ -1041,7 +1198,7 @@ export function Interview({ application, profile, nav }) {
         background: 'var(--surface-card)', boxShadow: 'var(--shadow-card)', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', fontWeight: 700,
       }}
     >
-      {ARROW_LEFT_ICON} Back to My Applications
+      {ARROW_LEFT_ICON} Back to My Application
     </button>
   );
 
@@ -1072,8 +1229,8 @@ export function Interview({ application, profile, nav }) {
             applicant had recorded a single answer. */}
         <div style={{ marginBottom: 16, padding: '0 clamp(8px, 4vw, 40px)' }}><Stepper current={allSubmitted ? 3 : 2} /></div>
         <div style={{ textAlign: 'center', marginBottom: 14 }}>
-          <h1 style={{ fontWeight: 600, fontSize: 'var(--text-2xl)', margin: '0 0 4px' }}>Video Interview — {application.job_postings?.title}</h1>
-          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.7, margin: 0 }}>Take your time — everything you need to know is on the next screen.</p>
+          <h1 style={{ fontWeight: 600, fontSize: 'var(--text-2xl)', margin: '0 0 4px' }}>Video Interview: {application.job_postings?.title}</h1>
+          <p style={{ fontSize: 'var(--text-xs)', opacity: 0.7, margin: 0 }}>Take your time, everything you need to know is on the next screen.</p>
         </div>
 
         {loadError && <p style={{ color: 'var(--red-700)' }}>{loadError}</p>}
@@ -1081,7 +1238,7 @@ export function Interview({ application, profile, nav }) {
         {responses === null ? (
           <p style={{ textAlign: 'center' }}>Loading your questions…</p>
         ) : responses.length === 0 ? (
-          <p style={{ textAlign: 'center' }}>Interview questions haven't been set up for this role's category yet — check back later.</p>
+          <p style={{ textAlign: 'center' }}>Interview questions haven't been set up for this role's category yet. Check back later.</p>
         ) : allSubmitted ? (
           <InterviewComplete nav={nav} />
         ) : !instructionsAcknowledged ? (
@@ -1107,7 +1264,7 @@ export function Interview({ application, profile, nav }) {
                     key={r.id}
                     onClick={() => reachable && setCurrentIndex(i)}
                     disabled={!reachable}
-                    aria-label={`Question ${i + 1}${submitted ? ' — submitted' : isCurrent ? ' — current' : ' — not yet reached'}`}
+                    aria-label={`Question ${i + 1}${submitted ? ', submitted' : isCurrent ? ', current' : ', not yet reached'}`}
                     className="btn-animate"
                     style={{
                       width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
@@ -1135,6 +1292,7 @@ export function Interview({ application, profile, nav }) {
                 jobCategory={application.job_postings?.category || ''}
                 stream={stream}
                 flipFromRect={currentIndex === 0 ? flipRectRef.current : null}
+                taglish={taglishMap[responses[currentIndex].question_id]}
                 onSubmitted={handleSubmitted}
                 onAutoAdvance={() => setCurrentIndex((i) => Math.min(responses.length - 1, i + 1))}
               />

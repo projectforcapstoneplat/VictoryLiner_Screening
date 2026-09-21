@@ -9,12 +9,53 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendEmail } from '../_shared/mailer.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
+
+// Same for every applicant, every job — scheduling only ever collects a
+// date/time/location now (see HrApplicantsList.jsx's SchedulePanel, which
+// dropped its old free-text "notes for the applicant" field), so what to
+// actually bring stopped being something HR types per-person and became a
+// fixed checklist instead.
+const WHAT_TO_BRING = [
+  'A valid government-issued ID',
+  'A printed copy of your resume',
+  'Original and photocopy of any relevant certificates or licenses (e.g. Driver’s License, NBI Clearance)',
+  'Smart casual attire',
+];
+
+// "Quick add" event URL — no Google account access needed on our end, no
+// API key, just a pre-filled form the applicant's own browser opens.
+// Google's own dates param wants UTC in YYYYMMDDTHHMMSSZ; scheduledAt is
+// already a UTC ISO string, so this just reformats it. No stored duration
+// anywhere in this app's schema, so this assumes a 1-hour interview.
+function toGCalUtc(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+}
+
+function buildGoogleCalendarLink(jobTitle: string, scheduledAt: string, location: string | null): string {
+  const start = toGCalUtc(scheduledAt);
+  const end = toGCalUtc(new Date(new Date(scheduledAt).getTime() + 60 * 60 * 1000).toISOString());
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: `Personal Interview: ${jobTitle}`,
+    dates: `${start}/${end}`,
+    details: `Victory Liner Careers personal interview for ${jobTitle}. Bring a valid ID, a printed resume, and any relevant certificates or licenses.`,
+    location: location || 'Victory Liner Careers',
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -46,7 +87,7 @@ Deno.serve(async (req) => {
       return json({ error: 'Only HR can trigger applicant notifications.' }, 403);
     }
 
-    const { applicationId, scheduledAt, location, notes } = await req.json();
+    const { applicationId, scheduledAt, location, isReschedule } = await req.json();
     if (!applicationId || !scheduledAt) {
       return json({ error: 'applicationId and scheduledAt are required.' }, 400);
     }
@@ -79,28 +120,52 @@ Deno.serve(async (req) => {
       const { error: notifyError } = await adminClient.from('applicant_notifications').insert({
         applicant_id: application.applicant_id,
         job_id: application.job_id,
-        title: `Your personal interview is scheduled — ${jobTitle}`,
-        body: `HR has scheduled your in-person interview at the Cubao station for ${formattedWhen}.${location ? ` Location: ${location}.` : ''}`,
+        title: isReschedule ? `Your personal interview has been rescheduled: ${jobTitle}` : `Your personal interview is scheduled: ${jobTitle}`,
+        body: `HR has ${isReschedule ? 're' : ''}scheduled your in-person interview for ${formattedWhen}${location ? ` at ${location}` : ''}.`,
       });
       notified = !notifyError;
     }
 
-    const detailRows = [
-      `<tr><td style="padding:4px 12px 4px 0;color:#888;">When</td><td style="padding:4px 0;font-weight:700;">${formattedWhen}</td></tr>`,
-      location ? `<tr><td style="padding:4px 12px 4px 0;color:#888;">Where</td><td style="padding:4px 0;">${location}</td></tr>` : '',
-      notes ? `<tr><td style="padding:4px 12px 4px 0;color:#888;vertical-align:top;">Notes</td><td style="padding:4px 0;">${notes}</td></tr>` : '',
-    ].filter(Boolean).join('');
+    const gcalLink = buildGoogleCalendarLink(jobTitle, scheduledAt, location || null);
+    const checklistHtml = WHAT_TO_BRING.map((item) => `<li style="margin-bottom:6px;">${item}</li>`).join('');
 
+    // Same branded card shell as the match-job-to-resumes email (red header
+    // bar, white card, pill CTAs) — this one used to be a bare unstyled div,
+    // the one part of the scheduling flow that still looked unfinished next
+    // to every other applicant-facing email.
     const result = await sendEmail({
       to: application.email,
-      subject: `Your personal interview is scheduled — ${jobTitle}`,
-      html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-        <p>Hi ${application.full_name || 'there'},</p>
-        <p>Congratulations — HR has scheduled your personal interview for <strong>${jobTitle}</strong>.</p>
-        <table style="margin:16px 0;border-collapse:collapse;">${detailRows}</table>
-        <p>Please arrive on time and bring any documents HR may have requested.</p>
-        ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">View your application</a></p>` : ''}
-        <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+      subject: isReschedule ? `Your personal interview has been rescheduled: ${jobTitle}` : `Your personal interview is scheduled: ${jobTitle}`,
+      html: `<div style="background:#f4f4f4;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.08);">
+          <div style="background:#c0152f;padding:26px 32px;text-align:center;">
+            <span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:0.3px;">Victory Liner Careers</span>
+          </div>
+          <div style="padding:32px;">
+            <p style="font-size:15px;color:#1a1a1a;margin:0 0 16px;">Hi ${application.full_name || 'there'},</p>
+            <p style="font-size:15px;color:#1a1a1a;line-height:1.6;margin:0 0 20px;">${
+              isReschedule
+                ? `Your personal interview for <strong>${jobTitle}</strong> has been rescheduled. Here are the updated details.`
+                : `Congratulations! HR has scheduled your personal interview for <strong>${jobTitle}</strong>.`
+            }</p>
+            <div style="background:#fdf0f1;border-radius:10px;padding:18px 20px;margin:0 0 22px;">
+              <div style="margin-bottom:${location ? '10px' : '0'};">
+                <span style="display:block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#c0152f;">When</span>
+                <span style="display:block;font-size:16px;font-weight:700;color:#1a1a1a;margin-top:2px;">${formattedWhen}</span>
+              </div>
+              ${location ? `<div><span style="display:block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#c0152f;">Where</span><span style="display:block;font-size:16px;font-weight:700;color:#1a1a1a;margin-top:2px;">${location}</span></div>` : ''}
+            </div>
+            <p style="font-size:13px;font-weight:700;color:#1a1a1a;margin:0 0 8px;">What to bring</p>
+            <ul style="font-size:14px;color:#1a1a1a;line-height:1.5;margin:0 0 26px;padding-left:20px;">${checklistHtml}</ul>
+            <div style="text-align:center;margin:0 0 10px;">
+              <a href="${gcalLink}" style="display:inline-block;background:#ffffff;color:#c0152f;font-weight:700;font-size:14px;padding:12px 28px;border-radius:999px;text-decoration:none;border:1.5px solid #c0152f;">Add to Google Calendar</a>
+            </div>
+            ${link ? `<div style="text-align:center;"><a href="${link}" style="display:inline-block;background:#c0152f;color:#ffffff;font-weight:700;font-size:14px;padding:13px 30px;border-radius:999px;text-decoration:none;">View Your Application</a></div>` : ''}
+          </div>
+          <div style="padding:18px 32px;border-top:1px solid #eeeeee;text-align:center;">
+            <span style="font-size:12px;color:#999999;">Victory Liner Careers</span>
+          </div>
+        </div>
       </div>`,
     });
 
@@ -113,10 +178,3 @@ Deno.serve(async (req) => {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
 });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}

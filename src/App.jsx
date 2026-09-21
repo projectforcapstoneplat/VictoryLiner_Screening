@@ -385,7 +385,14 @@ export function App() {
     // Same table, same component, landing pre-filtered to "Awaiting Your
     // Decision" instead of the unfiltered full directory — see the sidebar
     // NAV_ITEMS comment in HrShell.jsx for why this is its own tab.
-    if (screen === 'hr-decisions') return <HrApplicantsList nav={nav} profile={profile} stageFilter="pending" />;
+    // HR Head's role is purely reporting/oversight, never hands-on
+    // decisions, so this screen is hr_personnel-only, same enforcement as
+    // interview-questions/hr-accounts are hr_head-only below — not just a
+    // hidden sidebar link a stale bookmark or nav() call could still reach.
+    if (screen === 'hr-decisions') {
+      if (profile.role !== 'hr_personnel') return <HrHeadDashboard nav={nav} profile={profile} />;
+      return <HrApplicantsList nav={nav} profile={profile} stageFilter="pending" />;
+    }
     // `job` is reused here to carry a category string (not a job posting)
     // when the HR notification bell's "missing questions" alert navs here —
     // the `job` state slot is otherwise unused by this screen, and every

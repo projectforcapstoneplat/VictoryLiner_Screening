@@ -52,6 +52,25 @@ export async function verifySignInOtp(email, token) {
   return { data, error };
 }
 
+// Confirms the code Supabase's own "Confirm signup" email sends (see
+// signUpApplicant above) — a different Supabase OTP `type` than sign-in's
+// ('signup' vs 'email'), since it's confirming a not-yet-verified account
+// rather than authenticating an existing one. Verifying returns a real
+// session directly, so the applicant lands signed in without a separate
+// sign-in step afterward.
+export async function verifySignupOtp(email, token) {
+  const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
+  return { data, error };
+}
+
+// Re-sends the signup confirmation code — Supabase's dedicated endpoint for
+// this (not signUpApplicant again, which would attempt to create a second
+// account for the same not-yet-confirmed email).
+export async function resendSignupOtp(email) {
+  const { error } = await supabase.auth.resend({ type: 'signup', email });
+  return { error };
+}
+
 // Google is a full-page redirect away to accounts.google.com and back — the
 // only survivor across that round trip is the URL, since it isn't a page
 // reload of the SPA's own in-memory state (unlike email/password, which

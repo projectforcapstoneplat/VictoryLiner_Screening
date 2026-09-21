@@ -54,7 +54,14 @@ export async function replaceCriteriaForJob(jobId, criteria) {
 
 // AI-drafted starting point for the criteria list — HR reviews and edits
 // the result before saving, nothing here is persisted directly.
-export async function suggestCriteria({ title, description, requiredQualifications, preferredQualifications }) {
+// `existingCriteria` (plain keyword strings HR has already added) is passed
+// through so the AI itself knows what's already covered and drafts only
+// genuinely new ones — the caller's own client-side merge only ever caught
+// an exact re-suggestion of the same wording, not a same-meaning one worded
+// differently (e.g. "Bachelor's Degree" vs. the "Bachelor's Degree in
+// Computer Science" HR already typed in), which is exactly the kind of
+// duplicate only the AI itself can actually recognize.
+export async function suggestCriteria({ title, description, requiredQualifications, preferredQualifications, existingCriteria = [] }) {
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) return { error: 'Not signed in.' };
@@ -65,7 +72,7 @@ export async function suggestCriteria({ title, description, requiredQualificatio
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/suggest-criteria`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ title, description, requiredQualifications, preferredQualifications }),
+      body: JSON.stringify({ title, description, requiredQualifications, preferredQualifications, existingCriteria }),
     });
     const body = await res.json();
     if (!res.ok) return { error: body.error || 'Failed to suggest criteria.' };

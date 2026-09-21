@@ -15,12 +15,19 @@
 // (the applicant), same as their own RLS grants already allow.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
+import { formatCooldownDate, getCooldownUntil } from '../_shared/declineCooldown.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -33,6 +40,8 @@ Deno.serve(async (req) => {
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
     const {
       data: { user },
@@ -48,6 +57,15 @@ Deno.serve(async (req) => {
       .single();
     if (!callerProfile || callerProfile.role !== 'applicant') {
       return json({ error: 'Only applicants can apply.' }, 403);
+    }
+
+    // Applying is a deliberate, committed action, not a browse-and-retry
+    // one like match-resume-to-jobs — a real applicant might reasonably
+    // apply to several matched jobs in one sitting, but never dozens in
+    // minutes. This was the one applicant-facing write with no cap at all,
+    // unlike every AI-calling function here, which already checks this.
+    if (await checkRateLimit(callerClient, user.id, 'quick-apply', 10, 60)) {
+      return json({ error: 'Too many applications submitted — please wait a bit and try again.' }, 429);
     }
 
     const { jobId } = await req.json();
@@ -88,6 +106,16 @@ Deno.serve(async (req) => {
         ? `You've already been accepted for ${otherTitle} — new applications are closed while that stands.`
         : `You're still progressing through the video interview for ${otherTitle} — finish that one before applying elsewhere.`;
       return json({ error: message }, 409);
+    }
+
+    // Victory Liner HR policy: a decline on any application locks out new
+    // applications company-wide for 6 months from that decision, not just
+    // on the job they were declined from. application_decision_log is
+    // HR-read-only by RLS, so this has to go through adminClient rather
+    // than the caller's own client.
+    const cooldownUntil = await getCooldownUntil(adminClient, user.id);
+    if (cooldownUntil) {
+      return json({ error: `Your last application wasn't selected. New applications are paused until ${formatCooldownDate(cooldownUntil)}.` }, 409);
     }
 
     const { data: resume } = await callerClient
@@ -179,8 +207,6 @@ Deno.serve(async (req) => {
       return json({ error: insertError.message }, 500);
     }
 
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
     // Was fire-and-forget with no error check — a silent failure here left
     // the application genuinely stuck: MyApplications.jsx used to treat "no
     // resume_evaluations row" as "still screening," forever, with no way for
@@ -217,10 +243,3 @@ Deno.serve(async (req) => {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
 });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
