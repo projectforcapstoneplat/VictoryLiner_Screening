@@ -35,6 +35,13 @@ const CHANNELS = [
 
 export function Contact({ nav, backTo }) {
   const handleBack = () => nav(backTo?.screen || 'home', backTo?.job || null);
+  // The header's own "Back to Home" link used to be hardcoded to `home`
+  // regardless of backTo, unlike the circular arrow button below (which
+  // already respected it) — reaching Contact from Sign In and clicking it
+  // sent an applicant to the public homepage instead of back to Sign In.
+  // Both now share the same handleBack, so neither can drift out of sync
+  // with the other again.
+  const backLabel = backTo?.screen === 'signin' ? 'Back to Sign In' : 'Back to Home';
 
   return (
     <div style={{ background: 'var(--surface-page)', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-ui)', overflow: 'hidden' }}>
@@ -53,7 +60,7 @@ export function Contact({ nav, backTo }) {
           nav={nav}
           links={[
             { label: 'Contact Us', onClick: () => nav('contact') },
-            { label: 'Back to Home', onClick: () => nav('home') },
+            { label: backLabel, onClick: handleBack },
           ]}
         />
       </div>
