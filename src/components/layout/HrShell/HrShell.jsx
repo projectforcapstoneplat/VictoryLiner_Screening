@@ -55,12 +55,6 @@ const ICONS = {
       <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   ),
-  headset: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 13.5a9 9 0 0 1 18 0" />
-      <path d="M21 14.5a2 2 0 0 1-2 2h-1a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h3zM3 14.5a2 2 0 0 0 2 2h1a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1H3z" />
-    </svg>
-  ),
   chevron: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9" />
@@ -91,15 +85,16 @@ const ICONS = {
 
 const NAV_ITEMS = [
   { key: 'hr-dashboard', label: 'Dashboard', icon: 'dashboard', roles: ['hr_personnel', 'hr_head'] },
-  // hr_personnel-only — only they ever have decide buttons rendered
-  // (HrApplicantsList.jsx gates Advance/Decline/Reopen on that role
-  // throughout), so this tab would just be a read-only, redundant view of
-  // Applicants for HR Head. App.jsx routes this to the same
-  // HrApplicantsList component as 'hr-applicant-list' below, just with
-  // stageFilter="pending" pre-set — "Awaiting Your Decision" covers both
-  // decision stages, not just the video-interview one (see the `pending`
-  // stage in HrApplicantsList.jsx), instead of landing on the unfiltered
-  // full directory.
+  // hr_personnel-only — HR Head's role is purely reporting/oversight, never
+  // hands-on decisions, so this tab has no place on their sidebar at all.
+  // Only they ever have decide buttons rendered (HrApplicantsList.jsx gates
+  // Advance/Decline/Reopen on that role throughout) — for HR Head this would
+  // just be a read-only, redundant view of Applicants. App.jsx routes this
+  // to the same HrApplicantsList component as 'hr-applicant-list' below,
+  // just with stageFilter="pending" pre-set — "Awaiting Your Decision"
+  // covers both decision stages, not just the video-interview one (see the
+  // `pending` stage in HrApplicantsList.jsx), instead of landing on the
+  // unfiltered full directory.
   { key: 'hr-decisions', label: 'Decisions', icon: 'checkCircle', roles: ['hr_personnel'] },
   { key: 'hr-jobs', label: 'Job Openings', icon: 'briefcase', roles: ['hr_personnel', 'hr_head'] },
   { key: 'hr-applicant-list', label: 'Applicants', icon: 'applicantList', roles: ['hr_personnel', 'hr_head'] },
@@ -400,17 +395,7 @@ export function HrShell({ active, nav, profile, notifications = [], children }) 
           ))}
         </nav>
         <div style={{ padding: 14 }}>
-          <div style={{ background: 'var(--surface-page-alt)', borderRadius: 12, padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ color: 'var(--action-primary-bg)', display: 'flex' }}>{ICONS.headset}</span>
-            <div>
-              <strong style={{ fontSize: 'var(--text-sm)' }}>Need Help?</strong>
-              <p style={{ margin: '2px 0 0', fontSize: 'var(--text-xs)', opacity: 0.65 }}>Contact your system administrator.</p>
-            </div>
-            <a href="mailto:hr-admin@victoryliner.example" style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--action-primary-bg)', textDecoration: 'none' }}>
-              Contact Support →
-            </a>
-          </div>
-          <div style={{ padding: '16px 4px 4px', fontSize: 'var(--text-xs)', opacity: 0.55 }}>
+          <div style={{ padding: '4px 4px', fontSize: 'var(--text-xs)', opacity: 0.55 }}>
             <strong>Victory Liner Careers</strong>
             <div>Moving People, Changing Lives.</div>
           </div>

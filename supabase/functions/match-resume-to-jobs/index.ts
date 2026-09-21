@@ -10,14 +10,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
 import { formatWeight } from '../_shared/weightLabel.ts';
+import { formatCooldownDate, getCooldownUntil } from '../_shared/declineCooldown.ts';
 
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
 // once you have one, to stop other sites' browsers from being able to call this.
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -91,6 +89,14 @@ const SYSTEM_PROMPT =
   'criteria or context bleed into another\'s.';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -169,6 +175,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (scheduledApp) {
       return json({ error: "You already have a scheduled interview — job matching is on hold while that moves forward." }, 403);
+    }
+
+    // Victory Liner HR policy: a decline on any application pauses new job
+    // matching company-wide for 6 months from that decision, same reasoning
+    // as the scheduled-interview pause above. application_decision_log is
+    // HR-read-only by RLS, so this goes through adminClient, not callerClient.
+    const cooldownUntil = await getCooldownUntil(adminClient, user.id);
+    if (cooldownUntil) {
+      return json({ error: `Your last application wasn't selected. New job matching is paused until ${formatCooldownDate(cooldownUntil)}.` }, 403);
     }
 
     const { data: jobs, error: jobsError } = await callerClient
@@ -419,11 +434,4 @@ function buildJobBlock(job: any, criteria: { keyword: string; weight: number }[]
 function buildBatchPrompt(resumeContext: string, batch: any[], criteriaByJob: Map<string, { keyword: string; weight: number }[]>): string {
   const jobBlocks = batch.map((job, i) => buildJobBlock(job, criteriaByJob.get(job.id) ?? [], i + 1)).join('\n');
   return `${resumeContext}\n\nEvaluate the resume above against each of the following ${batch.length} job(s) — each job is independent, judge it only against its own criteria and description. Return one result per job in the "results" array, each tagged with the jobIndex shown in its "=== Job N ===" header so it can be matched back.\n${jobBlocks}`;
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
 }

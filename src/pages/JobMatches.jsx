@@ -37,6 +37,22 @@ import { listApplicationsForApplicant } from '../lib/applications.js';
 
 const PULSE_BLOCK = { className: 'loading-pulse', style: { background: 'var(--surface-page-alt)', animation: 'skeletonPulse 1.4s ease-in-out infinite', borderRadius: 4 } };
 
+// Guards against a real double-AI-cost bug: leaving this page (Home, or a
+// full refresh) while the one-time match-resume-to-jobs call is still in
+// flight, then coming back before it's finished writing anything to
+// resume_job_matches. The cache-read at the top of the loading effect below
+// only skips a fresh call once at least one row exists — if nothing's been
+// written yet, a second visit would just fire a second, fully redundant AI
+// call for the same resume. A plain in-memory flag wouldn't survive an
+// actual page refresh, so this uses sessionStorage instead (survives reload
+// within the same tab, gone once the tab closes) — good enough for the
+// realistic case without needing a real server-side lock. TTL is generous
+// versus how long a real match pass takes (MATCHING_MESSAGES cycles over
+// ~6.5s and is built to still be running past that for a normal job count).
+const IN_PROGRESS_TTL_MS = 60000;
+const inProgressKey = (applicantId) => `matching_in_progress_${applicantId}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Cycled while the one-time AI match call is in flight (see the loading
 // effect below) — a real match pass can take several seconds, and a single
 // static sentence the whole time reads as possibly-stuck. Ends on "Almost
@@ -49,7 +65,6 @@ const MATCHING_MESSAGES = [
   'Almost there…',
 ];
 
-const REFRESH_ICON = <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 6.5A8 8 0 0 0 4.6 9M4.6 9V4M4.6 9h4.9" /><path d="M6.5 17.5A8 8 0 0 0 19.4 15M19.4 15v5M19.4 15h-4.9" /></svg>;
 const CHECK_ICON = <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>;
 
 // A posting is only ever "new" for a short window after it first went
@@ -59,6 +74,32 @@ function isNewlyPosted(job) {
   if (!job?.created_at) return false;
   const ageDays = (Date.now() - new Date(job.created_at).getTime()) / (24 * 60 * 60 * 1000);
   return ageDays <= NEW_BADGE_DAYS;
+}
+
+// "New" is meant to catch the applicant's eye the first time they see this
+// job card, not sit there relabeling an already-seen posting every single
+// visit for a whole week. Tracked client-side (localStorage, per applicant)
+// rather than a DB column — this is purely cosmetic per-viewer state, not
+// something HR or any other device needs to see. `loadSeenNewJobIds` is
+// read once per mount and never re-read mid-session, so a badge doesn't
+// vanish out from under the applicant the instant the "mark as seen" effect
+// below runs — it just won't be there on their *next* visit.
+const seenNewJobsKey = (applicantId) => `seen_new_jobs_${applicantId}`;
+function loadSeenNewJobIds(applicantId) {
+  try {
+    const raw = localStorage.getItem(seenNewJobsKey(applicantId));
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+function markNewJobsSeen(applicantId, alreadySeen, newlyShownIds) {
+  if (newlyShownIds.length === 0) return;
+  try {
+    localStorage.setItem(seenNewJobsKey(applicantId), JSON.stringify([...alreadySeen, ...newlyShownIds]));
+  } catch {
+    /* localStorage unavailable — badge just keeps showing until it ages out, not a big deal */
+  }
 }
 
 function SkeletonCard({ index }) {
@@ -82,10 +123,9 @@ export function JobMatches({ profile, nav }) {
   const [error, setError] = useState('');
   const [matches, setMatches] = useState([]);
   const [minPercent, setMinPercent] = useState(50);
-  const [checking, setChecking] = useState(false);
-  const [checkMessage, setCheckMessage] = useState('');
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [matchingMsgIndex, setMatchingMsgIndex] = useState(0);
+  const [seenNewJobIds] = useState(() => loadSeenNewJobIds(profile.id));
 
   useEffect(() => {
     if (!loading) return;
@@ -113,10 +153,36 @@ export function JobMatches({ profile, nav }) {
         return;
       }
 
+      // Someone else (this same tab, a moment ago — Home then back, or a
+      // refresh) already kicked off a match run for this resume and it may
+      // still be writing results server-side. Poll the cache instead of
+      // starting a redundant, real-token-costing second AI call for the
+      // exact same resume.
+      const startedAt = Number(sessionStorage.getItem(inProgressKey(profile.id)) || 0);
+      if (startedAt && Date.now() - startedAt < IN_PROGRESS_TTL_MS) {
+        while (!cancelled && Date.now() - startedAt < IN_PROGRESS_TTL_MS) {
+          await sleep(2000);
+          if (cancelled) return;
+          const { data } = await getMyMatches(profile.id);
+          if (data?.length > 0) {
+            setMatches(data);
+            setLoading(false);
+            return;
+          }
+        }
+        // Timed out waiting — the other run likely stalled or crashed
+        // (closed tab mid-request, etc.). Falls through to start a fresh
+        // one below rather than leaving this applicant stuck forever.
+        sessionStorage.removeItem(inProgressKey(profile.id));
+        if (cancelled) return;
+      }
+
       // Nothing cached at all — either this resume has never been matched,
       // or it was just edited (which clears the cache). Either way, this is
       // the one AI call this resume gets until it changes again.
+      sessionStorage.setItem(inProgressKey(profile.id), String(Date.now()));
       const matchResult = await runResumeMatching();
+      sessionStorage.removeItem(inProgressKey(profile.id));
       if (cancelled) return;
       if (matchResult.error) {
         setError(matchResult.error);
@@ -135,39 +201,28 @@ export function JobMatches({ profile, nav }) {
     .filter((m) => m.score >= minPercent && m.job_postings?.status === 'published' && !deadlineInfo(m.job_postings?.application_deadline)?.closed)
     .sort((a, b) => b.score - a.score);
 
-  const handleCheckForNewMatches = async () => {
-    setChecking(true);
-    setCheckMessage('');
-    const result = await runResumeMatching();
-    setChecking(false);
-    if (result.error) {
-      setCheckMessage(result.error);
-      return;
-    }
-    const scoredThisCall = result.data.scoredThisCall ?? 0;
-    if (scoredThisCall === 0) {
-      setCheckMessage("You're already matched to every open position we currently have.");
-      return;
-    }
-    // match-resume-to-jobs' response is already the complete, freshly
-    // re-read match set (not just what changed this call) — comparing
-    // qualifying counts before/after this update, rather than just echoing
-    // scoredThisCall, avoids overclaiming "new matches" for newly-checked
-    // jobs that didn't actually clear the threshold.
-    const freshMatches = result.data.matches || [];
-    const newQualifyingCount =
-      freshMatches.filter((m) => m.score >= minPercent && m.job_postings?.status === 'published').length - qualifying.length;
-    setMatches(freshMatches);
-    setCheckMessage(
-      newQualifyingCount > 0
-        ? `Found ${newQualifyingCount} new match${newQualifyingCount === 1 ? '' : 'es'}!`
-        : `Checked ${scoredThisCall} newly posted role${scoredThisCall === 1 ? '' : 's'} — none were a strong enough fit yet.`,
-    );
-  };
+  // Records which "New" badges were actually shown this visit so they don't
+  // come back on the next one — deliberately not touching `seenNewJobIds`
+  // itself (see its comment above), just persisting for next time.
+  useEffect(() => {
+    if (loading) return;
+    const shownIds = qualifying.filter((m) => isNewlyPosted(m.job_postings) && !seenNewJobIds.has(m.job_id)).map((m) => m.job_id);
+    markNewJobsSeen(profile.id, seenNewJobIds, shownIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, matches]);
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} profile={profile} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          profile={profile}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
       <section style={{ maxWidth: 900, margin: '60px auto 0', padding: '0 20px' }}>
         <Reveal>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
@@ -179,35 +234,7 @@ export function JobMatches({ profile, nav }) {
                   : "Here's what suits your resume, based on our AI's comparison against every open position."}
               </p>
             </div>
-            {/* Shrunk to a small icon rather than a full labeled button —
-                the automatic pipeline (HR publishing -> match-job-to-resumes
-                -> notification + email) already covers the normal case with
-                zero clicks needed. This is a manual fallback for the one
-                gap it has: an individual applicant's AI scoring call can
-                silently fail with no auto-retry (the exact bug the City Bus
-                Driver debugging session root-caused), which a prominent
-                always-visible button would misrepresent as "part of the
-                normal flow" rather than "rarely needed safety net." */}
-            {!loading && !error && (
-              <button
-                onClick={handleCheckForNewMatches}
-                disabled={checking}
-                className="btn-animate"
-                title="Manually re-check for new matches — rarely needed, since new postings normally notify you automatically. Useful only if that silently missed something."
-                aria-label="Check for new matches"
-                style={{
-                  width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: checking ? 'default' : 'pointer', flexShrink: 0,
-                  background: 'var(--surface-page-alt)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  opacity: checking ? 0.55 : 1,
-                }}
-              >
-                {REFRESH_ICON}
-              </button>
-            )}
           </div>
-          {checkMessage && (
-            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--action-primary-bg)', fontWeight: 600, marginTop: 10, marginBottom: 0 }}>{checkMessage}</p>
-          )}
         </Reveal>
         <div style={{ marginBottom: 30 }} />
 
@@ -227,7 +254,7 @@ export function JobMatches({ profile, nav }) {
             <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, margin: 0 }}>No matching openings right now</h2>
             <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, maxWidth: 440, margin: 0 }}>
               None of our current openings are a strong enough fit for your resume yet. We'll email you the moment a
-              role that matches you opens up — no need to keep checking back.
+              role that matches you opens up, no need to keep checking back.
             </p>
             <Button variant="ghost" size="sm" onClick={() => nav('filter')}>Browse All Open Roles Anyway</Button>
           </Reveal>
@@ -244,33 +271,37 @@ export function JobMatches({ profile, nav }) {
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontWeight: 700, fontSize: 'var(--text-xl)', color: 'var(--text-primary)' }}>{job?.title || 'Untitled role'}</span>
-                          {isNewlyPosted(job) && (
+                          {isNewlyPosted(job) && !seenNewJobIds.has(jobId) && (
                             <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: '#0ca30c', color: '#fff', whiteSpace: 'nowrap' }}>
                               New
                             </span>
+                          )}
+                          {applied && (
+                            // "Already Applied" used to be a static, dead-end
+                            // tag — true the moment they apply, but easy to
+                            // misread as "you're done here" even while a
+                            // video interview is still outstanding. Made it a
+                            // button pointing at My Applications instead of
+                            // trying to duplicate that page's full status
+                            // logic (resume score, interview completion, HR
+                            // decision) here too. Sits right next to the job
+                            // title (same row as the New badge) instead of
+                            // off on the opposite side of the card, so it
+                            // reads as this job's status, not a
+                            // disconnected element.
+                            <button
+                              onClick={() => nav('my-applications', jobId)}
+                              className="btn-animate"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)', fontWeight: 700, padding: '3px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'var(--pink-100)', color: 'var(--action-primary-bg)', whiteSpace: 'nowrap' }}
+                            >
+                              {CHECK_ICON} Applied — View Status
+                            </button>
                           )}
                         </div>
                         <div style={{ fontSize: 'var(--text-xs)', opacity: 0.65, marginTop: 4 }}>{[job?.category, job?.location].filter(Boolean).join(' · ')}</div>
                       </div>
                     </div>
-                    {applied ? (
-                      // "Already Applied" used to be a static, dead-end tag —
-                      // true the moment they apply, but easy to misread as
-                      // "you're done here" even while a video interview is
-                      // still outstanding. Made it a button pointing at My
-                      // Applications instead of trying to duplicate that
-                      // page's full status logic (resume score, interview
-                      // completion, HR decision) here too.
-                      <button
-                        onClick={() => nav('my-applications', jobId)}
-                        className="btn-animate"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)', fontWeight: 700, padding: '9px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'var(--pink-100)', color: 'var(--action-primary-bg)', whiteSpace: 'nowrap' }}
-                      >
-                        {CHECK_ICON} Applied — View Status
-                      </button>
-                    ) : (
-                      <Button variant="strong" size="sm" onClick={() => nav('details', job)}>Apply</Button>
-                    )}
+                    {!applied && <Button variant="strong" size="sm" onClick={() => nav('details', job)}>Apply</Button>}
                   </div>
                   {job?.description && (
                     <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-primary)', opacity: 0.85, lineHeight: 1.6, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>

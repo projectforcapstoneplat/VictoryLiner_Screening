@@ -20,11 +20,9 @@ import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
 import { sendEmail } from '../_shared/mailer.ts';
 import { formatWeight } from '../_shared/weightLabel.ts';
+import { getCooldownApplicantIds } from '../_shared/declineCooldown.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 const GEMINI_MODEL = 'gemini-3.6-flash';
 
@@ -101,6 +99,14 @@ const SYSTEM_PROMPT =
   'applicants against each other.';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -189,7 +195,13 @@ Deno.serve(async (req) => {
       .select('applicant_id')
       .or('scheduled_interview_at.not.is.null,status.eq.interview_stage,status.eq.advanced');
     const blockedApplicantIds = new Set((blockedApps ?? []).map((a) => a.applicant_id));
-    const eligibleResumes = (resumes ?? []).filter((r) => !blockedApplicantIds.has(r.applicant_id));
+    // Victory Liner HR policy: a decline on any application pauses new
+    // matching company-wide for 6 months, same reasoning as the active-
+    // elsewhere exclusion above — scoring/notifying them during that window
+    // is pure noise, since quick-apply's own cooldown check blocks them from
+    // acting on it anyway.
+    const cooldownApplicantIds = await getCooldownApplicantIds(adminClient);
+    const eligibleResumes = (resumes ?? []).filter((r) => !blockedApplicantIds.has(r.applicant_id) && !cooldownApplicantIds.has(r.applicant_id));
 
     const { data: existing } = await adminClient
       .from('resume_job_matches')
@@ -197,7 +209,7 @@ Deno.serve(async (req) => {
       .eq('job_id', jobId);
     const alreadyScored = new Set((existing ?? []).map((m) => m.applicant_id));
     const unscored = eligibleResumes.filter((r) => !alreadyScored.has(r.applicant_id)).slice(0, MAX_RESUMES_PER_CALL);
-    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedActive=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
+    console.log(`[match-job-to-resumes] job=${jobId} totalResumes=${(resumes ?? []).length} excludedActiveOrCooldown=${(resumes ?? []).length - eligibleResumes.length} alreadyScored=${alreadyScored.size} unscored=${unscored.length}`);
 
     const rawSiteUrl = Deno.env.get('ALLOWED_ORIGIN');
     const siteUrl = rawSiteUrl && rawSiteUrl !== '*' ? rawSiteUrl : null;
@@ -221,19 +233,24 @@ Deno.serve(async (req) => {
         generationConfig: { responseMimeType: 'application/json', responseSchema: BATCH_EVALUATION_SCHEMA },
       });
       if (!ok) {
+        // The one piece of detail HR actually needs to know it's a real
+        // outage, not "nothing to do" — Gemini's own 429 body names which
+        // limit was hit (RESOURCE_EXHAUSTED, etc.), which callGemini
+        // already rotated through every configured key trying to avoid.
+        const reason = geminiBody?.error?.message || geminiBody?.error?.status || `Gemini request failed`;
         console.error(`[match-job-to-resumes] Gemini batch call failed (size=${batch.length})`, JSON.stringify(geminiBody));
-        return batch.map(() => ({ scored: false, notified: false }));
+        return batch.map(() => ({ scored: false, notified: false, failReason: reason }));
       }
 
       const candidate = geminiBody.candidates?.[0];
       if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) {
         console.error(`[match-job-to-resumes] bad finishReason=${candidate.finishReason} for batch (size=${batch.length})`);
-        return batch.map(() => ({ scored: false, notified: false }));
+        return batch.map(() => ({ scored: false, notified: false, failReason: `The AI declined to respond (${candidate.finishReason}).` }));
       }
       const text = candidate?.content?.parts?.[0]?.text;
       if (!text) {
         console.error(`[match-job-to-resumes] empty text for batch (size=${batch.length})`, JSON.stringify(geminiBody));
-        return batch.map(() => ({ scored: false, notified: false }));
+        return batch.map(() => ({ scored: false, notified: false, failReason: 'The AI returned an empty response.' }));
       }
 
       // deno-lint-ignore no-explicit-any
@@ -242,14 +259,14 @@ Deno.serve(async (req) => {
         parsedResults = JSON.parse(text)?.results ?? [];
       } catch (err) {
         console.error(`[match-job-to-resumes] batch parse failed (size=${batch.length})`, err instanceof Error ? err.message : err, text);
-        return batch.map(() => ({ scored: false, notified: false }));
+        return batch.map(() => ({ scored: false, notified: false, failReason: 'Could not parse the AI response.' }));
       }
 
       return Promise.all(batch.map(async (resume, i) => {
         const entry = parsedResults.find((r) => r.applicantIndex === i + 1);
         if (!entry) {
           console.error(`[match-job-to-resumes] no result for applicantIndex=${i + 1} (applicant=${resume.applicant_id})`);
-          return { scored: false, notified: false };
+          return { scored: false, notified: false, failReason: 'The AI response was missing this applicant.' };
         }
 
         const score = Math.max(0, Math.min(100, Math.round(Number(entry.score) || 0)));
@@ -292,6 +309,19 @@ Deno.serve(async (req) => {
     const scoredCount = results.filter((r) => r.scored).length;
     const notifiedCount = results.filter((r) => r.notified).length;
 
+    // There was real work to do (unscored.length > 0) and every single one
+    // of them failed — previously this still returned a plain 200 with
+    // scored: 0, which HrDashboard.jsx's own re-check handler reads as
+    // "everyone was already scored, nothing left to do" (see its own
+    // scoredCount === 0 branch) — a completely different, far less alarming
+    // situation than "the AI is down and nobody got matched." Surfacing
+    // this distinctly is what makes that message accurate instead of
+    // silently misleading whoever triggered this.
+    if (unscored.length > 0 && scoredCount === 0) {
+      const reason = results.find((r) => r.failReason)?.failReason || 'Unknown error.';
+      return json({ error: `Matching failed for all ${unscored.length} applicant(s) — no one was scored. Cause: ${reason}` }, 502);
+    }
+
     return json({ scored: scoredCount, notified: notifiedCount, remaining: eligibleResumes.length - alreadyScored.size - unscored.length });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
@@ -309,18 +339,35 @@ async function sendMatchEmail(
   // instruction. Falls back to plain text when ALLOWED_ORIGIN isn't set
   // (local/testing) — there's no real domain to link to in that case.
   const link = siteUrl ? `${siteUrl}/?screen=matches` : null;
+  const ctaHtml = link
+    ? `<a href="${link}" style="display:inline-block;background:#c0152f;color:#ffffff;font-weight:700;font-size:14px;padding:13px 30px;border-radius:999px;text-decoration:none;">View &amp; Apply</a>`
+    : `<span style="font-size:14px;color:#1a1a1a;">Sign in to Victory Liner Careers to view it and apply.</span>`;
+
   const result = await sendEmail({
     to: toEmail,
-    subject: `A new opening matches you — ${jobTitle}`,
-    html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
-      <p>Hi ${fullName || 'there'},</p>
-      <p>A new opening just went live that matches your resume: <strong>${jobTitle}</strong>.</p>
-      <p>${
-        link
-          ? `<a href="${link}" style="color:#c0152f;font-weight:700;">Sign in to view it and apply</a>.`
-          : 'Sign in to Victory Liner Careers to view it and apply.'
-      }</p>
-      <p style="margin-top:24px;color:#888;font-size:13px;">Victory Liner Careers</p>
+    subject: `A new opening matches you: ${jobTitle}`,
+    // Table-free, inline-styled only — email clients (Gmail included) strip
+    // <style> blocks and have patchy flexbox/grid support, so this stays to
+    // plain divs/padding, same constraint as every other transactional email
+    // in this app.
+    html: `<div style="background:#f4f4f4;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.08);">
+        <div style="background:#c0152f;padding:26px 32px;text-align:center;">
+          <span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:0.3px;">Victory Liner Careers</span>
+        </div>
+        <div style="padding:32px;">
+          <p style="font-size:15px;color:#1a1a1a;margin:0 0 16px;">Hi ${fullName || 'there'},</p>
+          <p style="font-size:15px;color:#1a1a1a;line-height:1.6;margin:0 0 20px;">A new opening just went live that matches your resume.</p>
+          <div style="background:#fdf0f1;border-radius:10px;padding:18px 20px;margin:0 0 26px;">
+            <span style="display:block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#c0152f;">New Match</span>
+            <span style="display:block;font-size:18px;font-weight:700;color:#1a1a1a;margin-top:4px;">${jobTitle}</span>
+          </div>
+          <div style="text-align:center;margin:0 0 8px;">${ctaHtml}</div>
+        </div>
+        <div style="padding:18px 32px;border-top:1px solid #eeeeee;text-align:center;">
+          <span style="font-size:12px;color:#999999;">Victory Liner Careers</span>
+        </div>
+      </div>
     </div>`,
   });
   return result.ok;
@@ -427,11 +474,4 @@ function buildBatchPrompt(job: any, criteria: any[], batch: any[]): string {
   const jobContext = buildJobContext(job, criteria);
   const applicantBlocks = batch.map((resume, i) => buildApplicantBlock(resume, i + 1)).join('\n');
   return `${jobContext}\n\nEvaluate each of the following ${batch.length} applicant(s) independently against the SAME job above — do not compare, rank, or curve them against each other. Return one result per applicant in the "results" array, each tagged with the applicantIndex shown in its "=== Applicant N ===" header so it can be matched back.\n${applicantBlocks}`;
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
 }

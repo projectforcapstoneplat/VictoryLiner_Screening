@@ -201,9 +201,15 @@ export function justCompletedInterview(prevResponses, nextResponses) {
   return !wasComplete && isComplete;
 }
 
-// Taglish translation for one question, on demand — nothing is persisted,
-// this just powers the "Translate to Taglish" toggle on the Interview screen.
-export async function translateToTaglish(text) {
+// Taglish translation for one interview question — cached server-side on
+// interview_questions.question_text_taglish once a questionId is passed
+// (see translate-question's own comment), so this only ever pays for a real
+// Gemini call the first time any applicant is ever asked that question.
+// Interview.jsx calls this for every assigned question up front, while the
+// applicant is still clicking through instructions/device-check, so the
+// Taglish text is already sitting in state by the time a question reveals —
+// no live wait during the timed recording window.
+export async function translateToTaglish(text, questionId) {
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) return { error: 'Not signed in.' };
@@ -212,7 +218,7 @@ export async function translateToTaglish(text) {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-question`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, questionId }),
     });
     const body = await res.json();
     if (!res.ok) return { error: body.error || 'Failed to translate.' };

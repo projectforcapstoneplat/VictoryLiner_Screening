@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { Select } from '../components/core/Select/Select.jsx';
+import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import { listAllJobs, deleteJob, setJobStatus } from '../lib/jobs.js';
 import { matchJobToAllResumes } from '../lib/resumeMatches.js';
 import { listJobCategories } from '../lib/jobCategories.js';
@@ -140,6 +141,11 @@ export function HrDashboard({ nav, profile }) {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [stationFilter, setStationFilter] = useState('');
   const [closingSoonOnly, setClosingSoonOnly] = useState(false);
+  // The job pending a delete confirmation — null when no confirm dialog is
+  // open. Branded ConfirmModal instead of window.confirm(), same reasoning
+  // as every other destructive action in this app: the native dialog can't
+  // be styled and reads as generic browser chrome, not this app.
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   const reload = () => {
     setLoading(true);
@@ -154,8 +160,10 @@ export function HrDashboard({ nav, profile }) {
     listJobCategories().then(({ data }) => setCategories(data.map((c) => c.name)));
   }, []);
 
-  const handleDelete = async (job) => {
-    if (!window.confirm(`Delete "${job.title}"? This cannot be undone.`)) return;
+  const handleDelete = async () => {
+    const job = pendingDelete;
+    setPendingDelete(null);
+    if (!job) return;
     const { error } = await deleteJob(job.id);
     if (error) {
       // 23503 = foreign_key_violation — job_postings has no cascade from
@@ -250,6 +258,15 @@ export function HrDashboard({ nav, profile }) {
 
   return (
     <HrShell active="hr-jobs" nav={nav} profile={profile}>
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title="Delete this posting?"
+        message={pendingDelete ? `"${pendingDelete.title}" will be permanently deleted. This can't be undone.` : ''}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
           <div>
@@ -373,7 +390,7 @@ export function HrDashboard({ nav, profile }) {
                         onClick={() => handleRecheckMatches(j)}
                       />
                     )}
-                    <IconOnly icon={ICONS.trash} tone="danger" title="Delete posting" onClick={() => handleDelete(j)} />
+                    <IconOnly icon={ICONS.trash} tone="danger" title="Delete posting" onClick={() => setPendingDelete(j)} />
                   </div>
                 </div>
               );

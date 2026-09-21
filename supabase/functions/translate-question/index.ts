@@ -3,6 +3,15 @@
 // easily. Server-side because it holds the Gemini API key — never exposed
 // to the browser. Any signed-in user may call this (not HR-only), since
 // applicants are the ones using it from the Interview screen.
+//
+// When called with a `questionId`, this caches its result on
+// interview_questions.question_text_taglish (migration
+// 0041_interview_question_taglish_cache.sql) — shared across every
+// applicant ever asked that question, not just the one who triggered this
+// call. Interview.jsx prefetches every assigned question's translation up
+// front, before the applicant ever starts a timed question, specifically so
+// a cache miss (the real Gemini call) never happens mid-recording; a cache
+// hit here returns near-instantly with no Gemini call at all.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit } from '../_shared/rateLimit.ts';
 import { callGemini } from '../_shared/gemini.ts';
@@ -10,10 +19,7 @@ import { callGemini } from '../_shared/gemini.ts';
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
 // once you have one, to stop other sites' browsers from being able to call this.
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -24,6 +30,14 @@ const SYSTEM_PROMPT =
   'understand. Return ONLY the translated question text — no quotes, no explanation, no English restatement.';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -44,13 +58,26 @@ Deno.serve(async (req) => {
       return json({ error: 'Not authenticated.' }, 401);
     }
 
-    if (await checkRateLimit(callerClient, user.id, 'translate-question', 15, 10)) {
-      return json({ error: 'Too many translation requests — please wait a few minutes and try again.' }, 429);
-    }
-
-    const { text } = await req.json();
+    const { text, questionId } = await req.json();
     if (!text?.trim()) {
       return json({ error: 'Text is required.' }, 400);
+    }
+
+    // Cache hit — every applicant asked this same question after the first
+    // one gets this instantly, no Gemini call and no rate-limit cost at all.
+    if (questionId) {
+      const { data: cached } = await callerClient
+        .from('interview_questions')
+        .select('question_text_taglish')
+        .eq('id', questionId)
+        .maybeSingle();
+      if (cached?.question_text_taglish) {
+        return json({ text: cached.question_text_taglish });
+      }
+    }
+
+    if (await checkRateLimit(callerClient, user.id, 'translate-question', 15, 10)) {
+      return json({ error: 'Too many translation requests — please wait a few minutes and try again.' }, 429);
     }
 
     const { ok: geminiOk, status: geminiStatus, body: geminiBody } = await callGemini(GEMINI_MODEL, {
@@ -75,15 +102,24 @@ Deno.serve(async (req) => {
       return json({ error: 'No translation returned.' }, 502);
     }
 
+    // Best-effort cache write — interview_questions is HR-head-write-only
+    // (see 0038_interview_questions_hr_head_only.sql), so this needs the
+    // service-role client even though the caller here is an applicant.
+    // Awaited (rather than fire-and-forget) since an edge function's
+    // isolate can be recycled the moment the response is sent, which would
+    // risk dropping an un-awaited write before it actually lands; a one-time
+    // cache-miss write is rare enough that this small added latency doesn't
+    // matter. A failed write never fails the response itself, though — worst
+    // case, the next applicant asked this question just pays for another
+    // Gemini call instead of getting a cache hit.
+    if (questionId) {
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const adminClient = createClient(supabaseUrl, serviceRoleKey);
+      await adminClient.from('interview_questions').update({ question_text_taglish: translated }).eq('id', questionId);
+    }
+
     return json({ text: translated });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
 });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}

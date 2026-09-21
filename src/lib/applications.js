@@ -69,6 +69,23 @@ export async function updateApplicationStatus(applicationId, status, decidedBy) 
   // HR manually advances someone into interview_stage (quick-apply's own
   // auto-advance stamps this itself, see supabase/functions/quick-apply).
   if (status === 'interview_stage') update.interview_stage_at = new Date().toISOString();
+  // 'submitted' is only ever reached through HrApplicantsList.jsx's Reopen
+  // action (see its own comment there) — including on someone who was
+  // already Advanced and had a personal interview on the calendar. Leaving
+  // that old scheduled_interview_at sitting in place used to mean
+  // re-advancing them later silently showed the STALE appointment as if it
+  // were still booked, with no new schedule ever actually set and no fresh
+  // notification sent — directly contradicting Reopen's own "resets...
+  // from scratch" copy. Clearing it here, unconditionally, is what makes
+  // that promise true and lets the reopen email correctly say the old
+  // interview was canceled.
+  if (status === 'submitted') {
+    update.scheduled_interview_at = null;
+    update.scheduled_interview_location = null;
+    update.scheduled_interview_notes = null;
+    update.scheduled_interview_set_by = null;
+    update.scheduled_interview_set_at = null;
+  }
   const { data, error } = await supabase
     .from('applications')
     .update(update)
@@ -103,9 +120,28 @@ export async function scheduleInterview(applicationId, { scheduledAt, location, 
   return { data, error };
 }
 
+// Every already-scheduled personal interview, company-wide (every job, not
+// just one) — feeds the calendar picker in HrApplicantsList.jsx's
+// SchedulePanel so HR can see actual booking density (which days are
+// already busy) while picking a new slot, instead of scheduling blind.
+// HR's own RLS grants already cover reading every application, same as the
+// unified Applicants table itself.
+export async function listScheduledInterviewDates() {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('id, full_name, scheduled_interview_at')
+    .not('scheduled_interview_at', 'is', null);
+  return { data: data || [], error };
+}
+
 // Best-effort, same reasoning as notifyApplicantStatusChange — a failed send
-// never undoes the schedule that was just saved.
-export async function notifyInterviewScheduled(applicationId, { scheduledAt, location, notes }) {
+// never undoes the schedule that was just saved. `isReschedule` (set by the
+// caller based on whether a scheduled_interview_at already existed before
+// this save) swaps the edge function's copy from "scheduled" to
+// "rescheduled" — same template, different framing, since a second
+// scheduling email phrased identically to the first would read like a
+// duplicate rather than an actual change.
+export async function notifyInterviewScheduled(applicationId, { scheduledAt, location, isReschedule }) {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData.session?.access_token;
@@ -113,7 +149,7 @@ export async function notifyInterviewScheduled(applicationId, { scheduledAt, loc
     await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-interview-scheduled-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ applicationId, scheduledAt, location, notes }),
+      body: JSON.stringify({ applicationId, scheduledAt, location, isReschedule }),
     });
   } catch {
     // Notification is a courtesy, not a requirement — never surface this.
@@ -142,8 +178,13 @@ export async function notifyHrInterviewCompleted(applicationId) {
 // Best-effort — a failed/unconfigured email send never undoes the status
 // change that already happened (see supabase/functions/send-status-email).
 // Deliberately swallows all errors: this is a courtesy notification, not
-// something that should ever block or alarm HR mid-decision.
-export async function notifyApplicantStatusChange(applicationId, status) {
+// something that should ever block or alarm HR mid-decision. `hadSchedule`
+// (only meaningful for status='submitted', i.e. Reopen) tells the edge
+// function whether this reopen also canceled a personal interview that was
+// already on the calendar — the applicant needs different copy for "your
+// application was reopened" versus "your interview was canceled AND your
+// application was reopened."
+export async function notifyApplicantStatusChange(applicationId, status, { hadSchedule } = {}) {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData.session?.access_token;
@@ -151,7 +192,7 @@ export async function notifyApplicantStatusChange(applicationId, status) {
     await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-status-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ applicationId, status }),
+      body: JSON.stringify({ applicationId, status, hadSchedule }),
     });
   } catch {
     // Notification is a courtesy, not a requirement — never surface this.
@@ -178,6 +219,50 @@ export async function resetApplicantPassword(applicantId) {
     return { data: { password: body.password } };
   } catch {
     return { error: { message: 'Could not reach the password reset service. Check your connection and try again.' } };
+  }
+}
+
+// Both reminder emails (send-interview-reminders, send-schedule-reminders)
+// are otherwise cron-only, authenticated with the server's own service-role
+// secret — nothing in this app could previously trigger or even preview
+// them short of waiting on real elapsed time. These call the same edge
+// functions with the caller's own HR session instead, which both now accept
+// as a one-off preview send for a specific applicationId, bypassing the
+// real batch's timing/already-sent gates without touching that
+// applicant's real reminder bookkeeping.
+export async function sendTestInterviewReminder(applicationId) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) return { error: { message: 'Not signed in.' } };
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-interview-reminders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicationId }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: { message: body.error || 'Failed to send preview.' } };
+    return { data: body };
+  } catch {
+    return { error: { message: 'Could not reach the reminder service. Check your connection and try again.' } };
+  }
+}
+
+export async function sendTestScheduleReminder(applicationId) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) return { error: { message: 'Not signed in.' } };
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-schedule-reminders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ applicationId }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: { message: body.error || 'Failed to send preview.' } };
+    return { data: body };
+  } catch {
+    return { error: { message: 'Could not reach the reminder service. Check your connection and try again.' } };
   }
 }
 

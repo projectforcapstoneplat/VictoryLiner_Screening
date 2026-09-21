@@ -9,10 +9,7 @@ import { callGemini } from '../_shared/gemini.ts';
 // Defaults to '*' for local/testing convenience; set the ALLOWED_ORIGIN secret to
 // your production domain (supabase secrets set ALLOWED_ORIGIN=https://yourdomain.com)
 // once you have one, to stop other sites' browsers from being able to call this.
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 // Check https://ai.google.dev/gemini-api/docs/models for the current model list before relying on this in production.
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -47,9 +44,22 @@ const SYSTEM_PROMPT =
   'Given a job title, description, and qualifications, list 5-10 concrete criteria a resume should be evaluated ' +
   'against, each weighted 1-5 by how critical it is to the role. Prefer specific, descriptive phrasing (e.g. ' +
   '"Defensive Driving Experience", "Valid Professional Driver\'s License") over both generic ones (e.g. ' +
-  '"hardworking") and bare single-word terms (e.g. "JavaScript" alone, without saying what about it matters).';
+  '"hardworking") and bare single-word terms (e.g. "JavaScript" alone, without saying what about it matters). ' +
+  'You may be given a list of criteria HR has already added — never suggest any of those again, and never suggest ' +
+  'a close variant or reworded/narrower/broader version of one that is already covered by the same underlying ' +
+  'requirement (e.g. if "Bachelor\'s Degree in Computer Science" is already listed, do not also suggest ' +
+  '"Bachelor\'s Degree" or "College Degree in IT" — that is the same requirement, not a new one). Only suggest ' +
+  'criteria that cover a genuine gap the existing list does not already address.';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -85,16 +95,23 @@ Deno.serve(async (req) => {
       return json({ error: 'Too many requests — please wait a few minutes and try again.' }, 429);
     }
 
-    const { title, description, requiredQualifications, preferredQualifications } = await req.json();
+    const { title, description, requiredQualifications, preferredQualifications, existingCriteria } = await req.json();
     if (!title?.trim()) {
       return json({ error: 'Job title is required.' }, 400);
     }
+
+    const cleanedExisting = Array.isArray(existingCriteria)
+      ? existingCriteria.map((c: unknown) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
+      : [];
 
     const userPrompt = [
       `Job Title: ${title}`,
       description ? `Description: ${description}` : null,
       requiredQualifications ? `Required Qualifications: ${requiredQualifications}` : null,
       preferredQualifications ? `Preferred Qualifications: ${preferredQualifications}` : null,
+      cleanedExisting.length > 0
+        ? `Criteria already added by HR (do not repeat or rephrase any of these):\n${cleanedExisting.map((c) => `- ${c}`).join('\n')}`
+        : null,
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -131,10 +148,3 @@ Deno.serve(async (req) => {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
 });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}

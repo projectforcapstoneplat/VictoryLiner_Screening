@@ -10,12 +10,17 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendEmail } from '../_shared/mailer.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders as buildCorsHeaders } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -77,7 +82,7 @@ Deno.serve(async (req) => {
 
     // Sent individually per HR account, in parallel, rather than one SMTP
     // call with every address crammed into a single "to" field.
-    const subject = `Video interview ready to review — ${application.full_name || 'an applicant'} (${jobTitle})`;
+    const subject = `Video interview ready to review: ${application.full_name || 'an applicant'} (${jobTitle})`;
     const html = `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;">
       <p><strong>${application.full_name || 'An applicant'}</strong> just finished their video interview for <strong>${jobTitle}</strong> — every question is answered and ready for your review.</p>
       ${link ? `<p><a href="${link}" style="color:#c0152f;font-weight:700;">Review it on the Decisions tab</a></p>` : ''}
@@ -95,10 +100,3 @@ Deno.serve(async (req) => {
     return json({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
   }
 });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}

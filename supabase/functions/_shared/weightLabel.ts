@@ -16,5 +16,5 @@ export const WEIGHT_LABELS: Record<number, string> = {
 
 export function formatWeight(weight: number): string {
   const label = WEIGHT_LABELS[weight] || WEIGHT_LABELS[3];
-  return `${weight}/5 — ${label}`;
+  return `${weight}/5: ${label}`;
 }

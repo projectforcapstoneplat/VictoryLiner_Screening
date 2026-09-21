@@ -4,7 +4,6 @@
 // was hardcoded to page=1/pageCount=1 regardless of actual job count).
 import { useEffect, useMemo, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
-import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Pagination } from '../components/navigation/Pagination/Pagination.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
@@ -169,7 +168,16 @@ export function JobFilter({ nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} onLogoClick={() => nav('home')} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
+        <Header
+          nav={nav}
+          onLogoClick={() => nav('home')}
+          links={[
+            { label: 'Contact Us', onClick: () => nav('contact') },
+            { label: 'Back to Home', onClick: () => nav('home') },
+          ]}
+        />
+      </div>
       <section style={{ maxWidth: 1066, margin: '60px auto 0', padding: '0 20px' }}>
         <div className="fade-in-up">
           <button
@@ -244,7 +252,6 @@ export function JobFilter({ nav }) {
         </div>
         {!loading && <div style={{ marginBottom: 60 }}><Pagination page={currentPage} pageCount={pageCount} onChange={setPage} /></div>}
       </section>
-      <Footer nav={nav} />
     </div>
   );
 }

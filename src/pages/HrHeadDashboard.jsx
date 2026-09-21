@@ -7,7 +7,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HrShell } from '../components/layout/HrShell/HrShell.jsx';
 import { KpiCard } from '../components/dashboard/KpiCard/KpiCard.jsx';
-import { PipelineBar } from '../components/dashboard/PipelineBar/PipelineBar.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { ActionPill } from '../components/core/ActionPill/ActionPill.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
@@ -20,8 +19,9 @@ const FILTER_SELECT_STYLE = {
 };
 import { getHeadOverview } from '../lib/reports.js';
 import { getScreeningSettings, updateMinResumeMatchPercent, updateInterviewQuestionCount } from '../lib/screeningSettings.js';
-import { SentimentBar, HorizontalBarChart } from '../components/dashboard/charts/DashboardCharts.jsx';
+import { SentimentBar, HorizontalBarChart, VerticalDistributionChart } from '../components/dashboard/charts/DashboardCharts.jsx';
 import { buildCsv, downloadCsv } from '../lib/csvExport.js';
+import { HiringProgressCard } from './HrPersonnelDashboard.jsx';
 
 const ICON_PROPS = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const KPI_ICONS = {
@@ -833,7 +833,7 @@ export function HrHeadDashboard({ nav, profile }) {
                   </div>
                 )}
               </SectionCard>
-              <SectionCard title="How Applicants Are Coming Across" subtitle="AI-read tone across every evaluated video answer" delay={0.06}>
+              <SectionCard title="Interview Tone" subtitle="AI-read tone across every evaluated video answer" delay={0.06}>
                 <SentimentBar sentiment={report.sentiment} />
                 <div style={{ display: 'flex', gap: 24, borderTop: '1px solid var(--border-hairline)', paddingTop: 16, marginTop: 4 }}>
                   <div>
@@ -850,10 +850,10 @@ export function HrHeadDashboard({ nav, profile }) {
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
               <SectionCard title="Resume Score Distribution" subtitle="How applicants' AI resume scores spread out">
-                <HorizontalBarChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
+                <VerticalDistributionChart rows={report.resumeScoreDistribution} emptyMessage="No resumes screened yet." />
               </SectionCard>
               <SectionCard title="Interview Score Distribution" subtitle="How applicants' AI interview scores spread out" delay={0.06}>
-                <HorizontalBarChart rows={report.interviewScoreDistribution} emptyMessage="No interviews evaluated yet." />
+                <VerticalDistributionChart rows={report.interviewScoreDistribution} emptyMessage="No interviews evaluated yet." />
               </SectionCard>
             </div>
 
@@ -884,32 +884,7 @@ export function HrHeadDashboard({ nav, profile }) {
               />
             </SectionCard>
 
-            <SectionCard title="Hiring Progress by Job" subtitle="Applications narrowing through screening, interview, and decision">
-              {report.jobBreakdown.length === 0 ? (
-                <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No job postings yet.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                  {report.jobBreakdown.map(({ job, applicantCount, avgResume, avgInterview, pipeline }) => {
-                    const meta = STATUS_META[job.status];
-                    return (
-                      <div key={job.id} style={{ borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta?.color, flexShrink: 0 }} />
-                            <strong style={{ fontSize: 'var(--text-sm)' }}>{job.title}</strong>
-                            <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{applicantCount} applicant{applicantCount === 1 ? '' : 's'}</span>
-                            {avgResume != null && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>· avg resume {avgResume}%</span>}
-                            {avgInterview != null && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>· avg interview {avgInterview}%</span>}
-                          </div>
-                          <Button variant="ghost" size="sm" onClick={() => nav('hr-applicant-list', job)}>View</Button>
-                        </div>
-                        <PipelineBar pipeline={pipeline} job={job} nav={nav} />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </SectionCard>
+            <HiringProgressCard jobBreakdown={report.jobBreakdown} nav={nav} />
 
             <SectionCard title="HR Personnel Activity" subtitle="Decisions made per staff member" action={<Button variant="ghost" size="sm" onClick={() => nav('hr-accounts')}>Manage</Button>}>
               {report.hrActivity.length === 0 ? (
