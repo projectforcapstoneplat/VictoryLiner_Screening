@@ -321,7 +321,14 @@ export function App() {
   if (screen === 'faq') return <FAQ nav={nav} />;
   if (screen === 'privacy') return <Privacy nav={nav} />;
   if (screen === 'terms') return <Terms nav={nav} />;
-  if (screen === 'contact') return <Contact nav={nav} backTo={previousStateRef.current} />;
+  // signedIn, not backTo.screen === 'signin' — a signed-out visitor almost
+  // always reaches the Sign In form as a *substitute* for whatever screen
+  // they were trying to reach (see the `if (!session) return <SignIn ... />`
+  // fallback below), so `screen` state itself usually still says 'home' (or
+  // 'resume', 'matches', ...), never the literal string 'signin'. Whether
+  // they're actually signed in is the one thing that's reliably true here,
+  // regardless of which screen was substituted.
+  if (screen === 'contact') return <Contact nav={nav} backTo={previousStateRef.current} signedIn={!!session} />;
   if (screen === 'signin') return <SignIn job={job} nav={nav} />;
   if (screen === 'forgot-password') return <ForgotPassword nav={nav} />;
   if (screen === 'hr-forgot-password') return <ForgotPassword nav={nav} variant="hr" />;

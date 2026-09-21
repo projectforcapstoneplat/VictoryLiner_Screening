@@ -33,7 +33,7 @@ const CHANNELS = [
   },
 ];
 
-export function Contact({ nav, backTo }) {
+export function Contact({ nav, backTo, signedIn }) {
   const handleBack = () => nav(backTo?.screen || 'home', backTo?.job || null);
   // The header's own "Back to Home" link used to be hardcoded to `home`
   // regardless of backTo, unlike the circular arrow button below (which
@@ -41,7 +41,14 @@ export function Contact({ nav, backTo }) {
   // sent an applicant to the public homepage instead of back to Sign In.
   // Both now share the same handleBack, so neither can drift out of sync
   // with the other again.
-  const backLabel = backTo?.screen === 'signin' ? 'Back to Sign In' : 'Back to Home';
+  //
+  // The label itself keys off `signedIn`, not backTo.screen — a signed-out
+  // visitor almost always reaches Sign In as a *substitute* for whatever
+  // screen they were trying to reach (App.jsx's `if (!session) return
+  // <SignIn ... />` fallback), so backTo.screen is usually still 'home' (or
+  // 'resume', 'matches', ...), never literally 'signin'. Being signed out is
+  // the one thing that's reliably true across all of those cases.
+  const backLabel = signedIn ? 'Back to Home' : 'Back to Sign In';
 
   return (
     <div style={{ background: 'var(--surface-page)', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-ui)', overflow: 'hidden' }}>
@@ -59,7 +66,6 @@ export function Contact({ nav, backTo }) {
         <Header
           nav={nav}
           links={[
-            { label: 'Contact Us', onClick: () => nav('contact') },
             { label: backLabel, onClick: handleBack },
           ]}
         />
