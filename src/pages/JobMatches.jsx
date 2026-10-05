@@ -30,7 +30,7 @@ import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
-import { getMyMatches, runResumeMatching } from '../lib/resumeMatches.js';
+import { getMyMatches, runFullResumeMatching } from '../lib/resumeMatches.js';
 import { getScreeningSettings } from '../lib/screeningSettings.js';
 import { deadlineInfo } from '../lib/deadline.js';
 import { listApplicationsForApplicant } from '../lib/applications.js';
@@ -126,6 +126,16 @@ export function JobMatches({ profile, nav }) {
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [matchingMsgIndex, setMatchingMsgIndex] = useState(0);
   const [seenNewJobIds] = useState(() => loadSeenNewJobIds(profile.id));
+  // How many published jobs still have no cached score for this resume —
+  // null until the first real number comes back from match-resume-to-jobs
+  // (either the initial auto-run below, or a manual recheck). MAX_JOBS_PER_CALL
+  // on the edge function caps each call at 15 newly-scored jobs, so a resume
+  // sitting in a pool of more than that (or one that's missed several batches
+  // of newly-published jobs) can stay short of full coverage indefinitely —
+  // this is what "Check for New Matches" below exists to close.
+  const [remainingJobs, setRemainingJobs] = useState(null);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckError, setRecheckError] = useState('');
 
   useEffect(() => {
     if (!loading) return;
@@ -178,10 +188,12 @@ export function JobMatches({ profile, nav }) {
       }
 
       // Nothing cached at all — either this resume has never been matched,
-      // or it was just edited (which clears the cache). Either way, this is
-      // the one AI call this resume gets until it changes again.
+      // or it was just edited (which clears the cache). Runs to full
+      // coverage (every published job scored, not just the first batch) —
+      // see runFullResumeMatching's own comment for why a single call isn't
+      // enough once there are more open jobs than its per-call cap.
       sessionStorage.setItem(inProgressKey(profile.id), String(Date.now()));
-      const matchResult = await runResumeMatching();
+      const matchResult = await runFullResumeMatching();
       sessionStorage.removeItem(inProgressKey(profile.id));
       if (cancelled) return;
       if (matchResult.error) {
@@ -190,12 +202,33 @@ export function JobMatches({ profile, nav }) {
         return;
       }
       setMatches(matchResult.data.matches || []);
+      setRemainingJobs(matchResult.data.remainingJobs ?? null);
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, [profile]);
+
+  // Picks up any jobs match-resume-to-jobs hasn't scored for this resume yet
+  // — either ones published since this resume's last full scoring pass, or
+  // ones left over from a previous call that hit MAX_JOBS_PER_CALL. Replaces
+  // `matches` with the edge function's own fresh read of every cached score
+  // for this applicant (not just the newly-scored ones), so anything that
+  // newly clears minPercent shows up immediately alongside what was already
+  // there.
+  const handleCheckNewMatches = async () => {
+    setRechecking(true);
+    setRecheckError('');
+    const result = await runFullResumeMatching();
+    setRechecking(false);
+    if (result.error) {
+      setRecheckError(result.error);
+      return;
+    }
+    setMatches(result.data.matches || []);
+    setRemainingJobs(result.data.remainingJobs ?? null);
+  };
 
   const qualifying = matches
     .filter((m) => m.score >= minPercent && m.job_postings?.status === 'published' && !deadlineInfo(m.job_postings?.application_deadline)?.closed)
@@ -233,8 +266,19 @@ export function JobMatches({ profile, nav }) {
                   ? MATCHING_MESSAGES[matchingMsgIndex]
                   : "Here's what suits your resume, based on our AI's comparison against every open position."}
               </p>
+              {!loading && remainingJobs > 0 && (
+                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--action-primary-bg)', margin: '6px 0 0' }}>
+                  {remainingJobs} open role{remainingJobs === 1 ? '' : 's'} haven't been checked against your resume yet.
+                </p>
+              )}
             </div>
+            {!loading && (
+              <Button variant="ghost" size="sm" onClick={handleCheckNewMatches} disabled={rechecking}>
+                {rechecking ? 'Checking…' : 'Check for New Matches'}
+              </Button>
+            )}
           </div>
+          {recheckError && <p style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)', margin: '8px 0 0' }}>{recheckError}</p>}
         </Reveal>
         <div style={{ marginBottom: 30 }} />
 

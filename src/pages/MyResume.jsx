@@ -24,6 +24,12 @@ const DOC_MUTED = '#5a5a5a';
 const DOC_RULE = '#d8d8d8';
 const DOC_ACCENT = '#b3121f';
 
+// currentColor on both so they automatically match whichever variant each
+// button ends up using (outline's red text vs. strong's white), rather than
+// a hardcoded color that'd be right for only one of the two.
+const EDIT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>;
+const PRINT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></svg>;
+
 function formatDate(value) {
   if (!value) return '';
   const d = new Date(value);
@@ -44,6 +50,32 @@ function SectionTitle({ children }) {
 
 function DocSection({ children, style }) {
   return <div style={{ marginBottom: 22, ...style }}>{children}</div>;
+}
+
+// Shown in place of the plain "Loading…" text while getMyResume is still in
+// flight — same card/padding shape as the real document below so there's no
+// size jump once it resolves, with pulsing gray blocks roughly outlining
+// where the name, contact line, and a few sections will land. Same
+// skeletonPulse animation JobMatches.jsx's own skeleton cards use, for a
+// consistent "this page is working on it" feel across the app rather than a
+// static block of text sitting by itself.
+const PULSE_BLOCK = { className: 'loading-pulse', style: { background: 'var(--surface-page-alt)', animation: 'skeletonPulse 1.4s ease-in-out infinite', borderRadius: 4 } };
+function ResumeDocSkeleton() {
+  return (
+    <div className="no-print" style={{ background: DOC_BG, borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 6vw, 56px)' }}>
+      <div style={{ textAlign: 'center', marginBottom: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <div {...PULSE_BLOCK} style={{ ...PULSE_BLOCK.style, width: '55%', height: 26 }} />
+        <div {...PULSE_BLOCK} style={{ ...PULSE_BLOCK.style, width: '40%', height: 12 }} />
+      </div>
+      {[90, 70, 80].map((w, i) => (
+        <div key={i} style={{ marginBottom: 22 }}>
+          <div {...PULSE_BLOCK} style={{ ...PULSE_BLOCK.style, width: '25%', height: 14, marginBottom: 10 }} />
+          <div {...PULSE_BLOCK} style={{ ...PULSE_BLOCK.style, width: `${w}%`, height: 10, marginBottom: 8 }} />
+          <div {...PULSE_BLOCK} style={{ ...PULSE_BLOCK.style, width: `${w * 0.7}%`, height: 10 }} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function MyResume({ profile, nav }) {
@@ -111,14 +143,14 @@ export function MyResume({ profile, nav }) {
           </div>
           {resume?.completed_at && (
             <div style={{ display: 'flex', gap: 10 }}>
-              <Button variant="ghost" size="sm" onClick={() => nav('resume')}>Edit Resume</Button>
-              <Button variant="strong" size="sm" onClick={() => window.print()}>Print / Save as PDF</Button>
+              <Button variant="outline" size="sm" onClick={() => nav('resume')}>{EDIT_ICON} Edit Resume</Button>
+              <Button variant="strong" size="sm" onClick={() => window.print()}>{PRINT_ICON} Print / Save as PDF</Button>
             </div>
           )}
         </div>
 
         {loading ? (
-          <p className="no-print" style={{ opacity: 0.7 }}>Loading…</p>
+          <ResumeDocSkeleton />
         ) : !resume?.completed_at ? (
           <div className="no-print" style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '40px 32px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
             <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, margin: 0 }}>You haven&rsquo;t built a resume yet</h2>

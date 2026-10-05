@@ -142,6 +142,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
   const [authMethod, setAuthMethod] = useState('password');
 
   // Create Account state
+  const [caFullName, setCaFullName] = useState('');
   const [caEmail, setCaEmail] = useState('');
   const [caPassword, setCaPassword] = useState('');
   const [verifyPassword, setVerifyPassword] = useState('');
@@ -272,6 +273,17 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
   const handleCreateAccount = async () => {
     setCaError('');
     setEmailTaken(false);
+    // Was never asked at all — signUpApplicant() has taken a `fullName` param
+    // since it was written, but nothing here ever passed one, so every
+    // plain email/password sign-up landed with profiles.full_name stuck at
+    // null. HR had no way to tell who these accounts even were until each
+    // one separately reached the resume wizard's own Basic Information step
+    // (Google sign-in never had this gap — it already gets a name from
+    // Google directly). Required here instead, so it's captured up front.
+    if (!caFullName.trim()) {
+      setCaError('Please enter your full name.');
+      return;
+    }
     if (!consent) {
       setCaError('Please read and agree to the Terms and Conditions before creating an account.');
       setTermsShake((n) => n + 1);
@@ -295,7 +307,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
       setCaError('Temporary or disposable email addresses are not allowed. Please use a permanent email address.');
       return;
     }
-    const { data, error: signUpError } = await signUpApplicant({ email: caEmail, password: caPassword });
+    const { data, error: signUpError } = await signUpApplicant({ email: caEmail, password: caPassword, fullName: caFullName.trim() });
     setCaLoading(false);
     if (signUpError) {
       setCaError(friendlyAuthError(signUpError.message));
@@ -617,6 +629,7 @@ export function SignIn({ job, nav, redirectTo, initialMode = 'signin' }) {
                   </div>
                 ) : (
                   <>
+                    <FloatingInput id="create-full-name" label="Full Name" type="text" value={caFullName} onChange={(e) => setCaFullName(e.target.value)} />
                     <FloatingInput id="create-email" label="Email Address" type="email" value={caEmail} onChange={(e) => setCaEmail(e.target.value)} />
                     <FloatingInput id="create-password" label="Password" type="password" value={caPassword} onChange={(e) => setCaPassword(e.target.value)} />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: -12 }}>

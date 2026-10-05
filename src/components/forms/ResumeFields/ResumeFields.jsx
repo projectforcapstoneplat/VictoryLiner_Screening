@@ -482,7 +482,7 @@ export function TagInput({ label, required, values, onChange, placeholder, hint,
         {values.map((v) => (
           <span key={v} className="chip-pop" style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)',
-            padding: '4px 10px', borderRadius: 999, background: 'var(--pink-100)', color: 'var(--red-700)',
+            padding: '4px 10px', borderRadius: 999, background: 'var(--gray-100)', color: 'var(--text-primary)',
           }}>
             {v}
             <button

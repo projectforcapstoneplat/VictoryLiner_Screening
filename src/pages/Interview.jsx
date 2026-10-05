@@ -8,7 +8,7 @@ import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { Stepper } from '../components/navigation/Stepper/Stepper.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
-import { ensureAssignedResponses, uploadResponseVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
+import { ensureAssignedResponses, uploadResponseVideo, uploadIntroVideo, translateToTaglish, recordAttempt, justCompletedInterview } from '../lib/interview.js';
 import { notifyHrInterviewCompleted } from '../lib/applications.js';
 import { evaluateResponse } from '../lib/interviewEvaluation.js';
 import { saveRecoveryChunks, loadRecoveryChunks, clearRecoveryChunks } from '../lib/videoRecoveryStore.js';
@@ -18,6 +18,7 @@ import { measureDownloadSpeedMbps, classifySpeed } from '../lib/connectionSpeed.
 
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
+const INTRO_RECORD_SECONDS = 30;
 
 const ARROW_LEFT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>;
 
@@ -448,6 +449,183 @@ function DeviceCheck({ stream, error, videoRef, onContinue }) {
         </div>
       )}
     </div>
+  );
+}
+
+// A short, ungraded "say your name" clip recorded once, right after the
+// device check passes and before the first real question — its own gate,
+// not a row in interview_responses. Nothing about it is scored: the AI
+// evaluation pipeline (evaluateResponse, interview_evaluations) only ever
+// reads interview_responses, so this structurally can't dilute a question
+// score the way folding it into the same table would risk. It's a warm-up
+// for the applicant and a face/voice for HR during review, nothing more.
+//
+// Deliberately simpler than AnswerRecorder: no hidden-question fairness
+// rule (there's no question to hide), no server-tracked attempt limit
+// (nothing here is worth gaming, so re-records are free and client-side
+// only), no live transcript. Same locked -> countdown -> recording ->
+// preview -> submitted shape, reusing CountdownRing/formatTime from above.
+function IntroRecorder({ applicantId, applicationId, stream, onSubmitted }) {
+  const [mode, setMode] = useState('locked');
+  const [recordedBlob, setRecordedBlob] = useState(null);
+  const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
+  const [recordSecondsLeft, setRecordSecondsLeft] = useState(INTRO_RECORD_SECONDS);
+
+  const videoRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+
+  // Same reasoning as AnswerRecorder's own attachVideo — a ref callback
+  // (not a plain useEffect on [stream]) so the live-preview <video> gets its
+  // srcObject set on every mount of this exact node, including after a
+  // re-record swaps in a fresh one.
+  const attachVideo = useCallback((el) => {
+    videoRef.current = el;
+    if (el && stream) el.srcObject = stream;
+  }, [stream]);
+
+  const startRecording = () => {
+    chunksRef.current = [];
+    let recorder;
+    try {
+      if (!MediaRecorder.isTypeSupported('video/webm')) throw new Error('unsupported');
+      recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    } catch {
+      setError('Video recording is not supported in this browser. Try Chrome or Edge instead.');
+      setMode('locked');
+      return;
+    }
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      setRecordedBlob(new Blob(chunksRef.current, { type: 'video/webm' }));
+      setMode('preview');
+    };
+    mediaRecorderRef.current = recorder;
+    recorder.start(1000);
+    setRecordSecondsLeft(INTRO_RECORD_SECONDS);
+    setMode('recording');
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+  };
+
+  useEffect(() => {
+    if (mode !== 'countdown') return;
+    if (readySecondsLeft <= 0) {
+      startRecording();
+      return;
+    }
+    const t = setTimeout(() => setReadySecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, readySecondsLeft]);
+
+  useEffect(() => {
+    if (mode !== 'recording') return;
+    if (recordSecondsLeft <= 0) {
+      stopRecording();
+      return;
+    }
+    const t = setTimeout(() => setRecordSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, recordSecondsLeft]);
+
+  const beginCountdown = () => {
+    if (!stream) {
+      setError('Camera/microphone access was lost. Please refresh and try again.');
+      return;
+    }
+    setError('');
+    setReadySecondsLeft(READY_SECONDS);
+    setMode('countdown');
+  };
+
+  const reRecord = () => {
+    setError('');
+    setRecordedBlob(null);
+    beginCountdown();
+  };
+
+  const submit = async () => {
+    setUploading(true);
+    setError('');
+    const { data, error: uploadErr } = await uploadIntroVideo({ applicantId, applicationId, blob: recordedBlob });
+    setUploading(false);
+    if (uploadErr) {
+      setError(uploadErr.message || 'Upload failed. Check your connection and try again.');
+      return;
+    }
+    setMode('submitted');
+    onSubmitted(data.intro_video_path);
+  };
+
+  return (
+    <Reveal>
+      <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(18px, 3vw, 28px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+        <div style={{ textAlign: 'center', maxWidth: 460 }}>
+          <strong style={{ fontSize: 'var(--text-lg)' }}>Quick Introduction</strong>
+          <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
+            Before the questions, record a short {INTRO_RECORD_SECONDS}-second clip saying your name and a quick hello. This isn't scored — HR just gets to see who they're talking to.
+          </p>
+        </div>
+
+        <div style={{ width: '100%', maxWidth: 420 }}>
+          {(mode === 'locked' || mode === 'countdown' || mode === 'recording') && stream && (
+            <div style={{ position: 'relative' }}>
+              <video ref={attachVideo} autoPlay muted playsInline style={{ width: '100%', borderRadius: 8, background: '#000', display: 'block' }} />
+              {mode === 'countdown' && (
+                <div className="fade-in-up" style={{
+                  position: 'absolute', inset: 0, borderRadius: 8, background: 'rgba(15,10,10,0.55)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+                }}>
+                  <CountdownRing secondsLeft={readySecondsLeft} totalSeconds={READY_SECONDS} />
+                  <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: '#fff' }}>Get ready…</span>
+                </div>
+              )}
+              {mode === 'recording' && (
+                <div style={{
+                  position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'rgba(15,10,10,0.65)', color: '#fff', padding: '6px 12px', borderRadius: 999,
+                  fontSize: 'var(--text-sm)', fontWeight: 700,
+                }}>
+                  <span className="recording-dot-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red-700)' }} />
+                  {formatTime(recordSecondsLeft)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === 'preview' && recordedBlob && (
+            <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+          )}
+
+          {mode === 'submitted' && (
+            <div style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 8, background: 'var(--surface-page-alt)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--text-sm)', color: 'var(--red-700)', fontWeight: 700 }}>
+              ✓ Introduction submitted
+            </div>
+          )}
+        </div>
+
+        {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)' }}>{error}</div>}
+
+        {mode !== 'submitted' && (
+          <div style={{ display: 'flex', gap: 12 }}>
+            {mode === 'locked' && <Button variant="strong" size="sm" onClick={beginCountdown} disabled={!stream}>Start Recording</Button>}
+            {mode === 'recording' && <Button variant="strong" size="sm" onClick={stopRecording}>■ Stop</Button>}
+            {mode === 'preview' && recordedBlob && (
+              <>
+                <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Use This Take'}</Button>
+                <Button variant="outline" size="sm" onClick={reRecord} disabled={uploading}>Re-record</Button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </Reveal>
   );
 }
 
@@ -1079,6 +1257,10 @@ export function Interview({ application, profile, nav }) {
   const [loadError, setLoadError] = useState('');
   const [instructionsAcknowledged, setInstructionsAcknowledged] = useState(false);
   const [deviceCheckPassed, setDeviceCheckPassed] = useState(false);
+  // Starts from whatever the application already has (a returning applicant
+  // who already recorded their intro shouldn't be asked again), then flips
+  // once IntroRecorder's own upload succeeds this session.
+  const [introVideoPath, setIntroVideoPath] = useState(application?.intro_video_path || null);
   // Prefetched the moment questions are assigned — well before the
   // applicant ever reaches a Start button, while they're still clicking
   // through Instructions/Connection-Device-Check — so by the time a
@@ -1139,11 +1321,15 @@ export function Interview({ application, profile, nav }) {
   // the prop value, not this ref, so clearing it here doesn't affect that) —
   // cleared right after so navigating back to question 1 later (Previous,
   // or clicking its dot) doesn't replay the same handoff animation from a
-  // now-stale device-check position.
+  // now-stale device-check position. Gated on introVideoPath too, not just
+  // deviceCheckPassed — IntroRecorder now sits between the two, and the
+  // question list (where the rect actually gets consumed) doesn't render
+  // until the intro clip is done, so clearing this any earlier would wipe it
+  // out before Question 1 ever gets a chance to read it.
   useEffect(() => {
-    if (!deviceCheckPassed) return;
+    if (!deviceCheckPassed || !introVideoPath) return;
     flipRectRef.current = null;
-  }, [deviceCheckPassed]);
+  }, [deviceCheckPassed, introVideoPath]);
 
   useEffect(() => {
     if (!application?.id) return;
@@ -1245,6 +1431,8 @@ export function Interview({ application, profile, nav }) {
           <Reveal><InterviewInstructions onContinue={() => setInstructionsAcknowledged(true)} /></Reveal>
         ) : !deviceCheckPassed ? (
           <Reveal><DeviceCheck stream={stream} error={streamError} videoRef={deviceCheckVideoRef} onContinue={handleDeviceCheckPassed} /></Reveal>
+        ) : !introVideoPath ? (
+          <IntroRecorder applicantId={profile.id} applicationId={application.id} stream={stream} onSubmitted={setIntroVideoPath} />
         ) : (
           // One question on screen at a time — not the whole list — with a
           // clickable dot per question above it: filled/checked once

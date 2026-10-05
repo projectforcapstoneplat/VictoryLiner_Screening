@@ -19,7 +19,8 @@ import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import { FormError } from '../components/feedback/FormError/FormError.jsx';
 import { Reveal } from '../components/motion/Reveal/Reveal.jsx';
 import { DROPDOWN_ARROW_STYLE } from '../components/core/Select/Select.jsx';
-import { getScoredApplicants } from '../lib/reports.js';
+import { getScoredApplicants, getUnappliedApplicants } from '../lib/reports.js';
+import { getMyResume } from '../lib/applicantResume.js';
 import {
   getApplicationById,
   listApplicationsByIds,
@@ -51,6 +52,14 @@ const SCORE_TYPE_OPTIONS = [
   { value: 'resume', label: 'Resume Score Only' },
   { value: 'interview', label: 'Interview Score Only' },
 ];
+
+// Marks a synthetic row built from an applicant account with no
+// applications at all (see getUnappliedApplicants in reports.js) — not a
+// real applications.id, so every place that treats applicationId as one
+// (loadDetail, decide actions, scheduling, CSV export) needs to recognize
+// and skip/branch on it rather than sending it straight to a query that
+// expects a real application row.
+const UNAPPLIED_PREFIX = 'unapplied:';
 
 const DECISION_META = {
   submitted: { label: 'Awaiting Review', bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' },
@@ -537,7 +546,32 @@ function InterviewResponseRow({ response, evaluation, status, errorMessage, onRe
   );
 }
 
-function InterviewSection({ responses, evaluations, evalStatus, evalErrors, onRetry, onResetAttempts, expectedCount }) {
+// The short, ungraded "say your name" clip recorded before the real
+// questions (see IntroRecorder in Interview.jsx) — its own row, not folded
+// into the per-question accordion below, since there's nothing to expand:
+// no score, no transcript, no re-evaluate. Just a label and a watch button.
+function IntroClipRow({ path, onWatch }) {
+  if (!path) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 14px', border: '1.5px solid var(--border-hairline)', borderRadius: 10, marginTop: 8 }}>
+      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700 }}>Introduction</span>
+      <button
+        type="button"
+        onClick={() => onWatch(path)}
+        className="btn-animate"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 999,
+          border: '1.5px solid var(--action-primary-bg)', background: 'transparent', color: 'var(--action-primary-bg)',
+          cursor: 'pointer', fontFamily: 'inherit', fontSize: 'var(--text-xs)', fontWeight: 700,
+        }}
+      >
+        {WATCH_ICON} Watch
+      </button>
+    </div>
+  );
+}
+
+function InterviewSection({ introVideoPath, responses, evaluations, evalStatus, evalErrors, onRetry, onResetAttempts, expectedCount }) {
   // Local to this one section, not the outer applicant-row expandedSections
   // Set — a question's open/closed state doesn't need to survive collapsing
   // and reopening "Video Interview" itself, and keeping it scoped here
@@ -556,9 +590,6 @@ function InterviewSection({ responses, evaluations, evalStatus, evalErrors, onRe
     if (url) setWatchingUrl(url);
   };
 
-  if (!responses.length) {
-    return <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 12 }}>No video interview started yet.</p>;
-  }
   // ensureAssignedResponses (src/lib/interview.js) only ever assigns however
   // many unique questions actually exist in this role's category — if the
   // bank has fewer than HR Head's configured count, the applicant silently
@@ -568,25 +599,32 @@ function InterviewSection({ responses, evaluations, evalStatus, evalErrors, onRe
   return (
     <div style={{ marginTop: 12 }}>
       <strong style={{ fontSize: 'var(--text-sm)' }}>Video Interview</strong>
-      {short && (
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)', marginTop: 4 }}>
-          Only {responses.length} of the configured {expectedCount} question{expectedCount === 1 ? '' : 's'} were available in this role's category — the question bank may be short.
-        </p>
+      <IntroClipRow path={introVideoPath} onWatch={handleWatch} />
+      {!responses.length ? (
+        <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 12 }}>No video interview started yet.</p>
+      ) : (
+        <>
+          {short && (
+            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)', marginTop: 4 }}>
+              Only {responses.length} of the configured {expectedCount} question{expectedCount === 1 ? '' : 's'} were available in this role's category — the question bank may be short.
+            </p>
+          )}
+          {responses.map((r) => (
+            <InterviewResponseRow
+              key={r.id}
+              response={r}
+              evaluation={evaluations[r.id]}
+              status={evalStatus[r.id]}
+              errorMessage={evalErrors[r.id]}
+              onRetry={onRetry}
+              onResetAttempts={onResetAttempts}
+              onWatch={handleWatch}
+              open={openId === r.id}
+              onToggle={() => toggleQuestion(r.id)}
+            />
+          ))}
+        </>
       )}
-      {responses.map((r) => (
-        <InterviewResponseRow
-          key={r.id}
-          response={r}
-          evaluation={evaluations[r.id]}
-          status={evalStatus[r.id]}
-          errorMessage={evalErrors[r.id]}
-          onRetry={onRetry}
-          onResetAttempts={onResetAttempts}
-          onWatch={handleWatch}
-          open={openId === r.id}
-          onToggle={() => toggleQuestion(r.id)}
-        />
-      ))}
       {watchingUrl && <VideoModal url={watchingUrl} onClose={() => setWatchingUrl(null)} />}
     </div>
   );
@@ -1260,6 +1298,7 @@ function DecisionReviewModal({
               )}
               <AiAssessment evaluation={evaluation} status={evalStat} errorMessage={evalErrorMsg} onRetry={onRetryResume} />
               <InterviewSection
+                introVideoPath={a.intro_video_path}
                 responses={interviewResponses}
                 evaluations={interviewEvaluations}
                 evalStatus={interviewEvalStatus}
@@ -1434,6 +1473,18 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
     });
   };
   useEffect(load, []);
+  // Registered applicant accounts with zero applications — separate from
+  // `scored` above on purpose, not merged into it. `scored`/`filtered` feed
+  // a lot more than just this table (CSV export, bulk-select, the Decisions
+  // tab's grouping, advancedCountByJob…), all of which assume a real
+  // application; injecting synthetic no-job rows into that shared array
+  // risked breaking any of them in a way that's easy to miss. Rendered as
+  // its own block after the real rows instead — same row/detail look, own
+  // isolated state.
+  const [unapplied, setUnapplied] = useState([]);
+  useEffect(() => {
+    getUnappliedApplicants().then(({ data }) => setUnapplied(data || []));
+  }, []);
   useEffect(() => {
     getScreeningSettings().then(({ data }) => {
       if (data) setInterviewQuestionCount(data.interview_question_count);
@@ -1596,6 +1647,22 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   }
 
   async function loadDetail(applicationId) {
+    // Not a real application — an "unapplied" row (see UNAPPLIED_PREFIX),
+    // synthesized from a resume, not an applications row. Skips
+    // refreshInterviewSection entirely (there's no application_id for it to
+    // even query against) and fetches their standalone resume instead,
+    // stashed in the same fullApplications map so every existing
+    // resume-field reader below (DrivingInfo, the Skills/Experience/
+    // Education accordions) keeps working unmodified — applicant_resumes
+    // and applications share the exact same column names for all of those.
+    if (applicationId.startsWith(UNAPPLIED_PREFIX)) {
+      if (fullApplications[applicationId] || detailLoading[applicationId]) return;
+      setDetailLoading((d) => ({ ...d, [applicationId]: true }));
+      const { data } = await getMyResume(applicationId.slice(UNAPPLIED_PREFIX.length));
+      setDetailLoading((d) => ({ ...d, [applicationId]: false }));
+      if (data) setFullApplications((m) => ({ ...m, [applicationId]: data }));
+      return;
+    }
     const interviewRefresh = refreshInterviewSection(applicationId);
     if (fullApplications[applicationId] || detailLoading[applicationId]) {
       await interviewRefresh;
@@ -1963,8 +2030,16 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
       .filter((s) => !jobFilter || s.job?.id === jobFilter.id)
       .filter((s) => matchesStage(s, activeStageFilter))
       .filter((s) => {
+        // A missing score (evaluation still pending, or failed) always
+        // passes through regardless of the range — there's no score *value*
+        // to compare against min/max yet, and excluding them unconditionally
+        // used to mean an applicant could be completely invisible on this
+        // page, with no row and no count, for as long as their AI evaluation
+        // hadn't resolved. The table itself already renders "—" for a null
+        // score (see the cells below), so there's nothing stopping them from
+        // being shown; only this filter ever hid them.
         const score = scoreFor(s, scoreType);
-        return score != null && score >= scoreMin && score <= scoreMax;
+        return score == null || (score >= scoreMin && score <= scoreMax);
       })
       .filter((s) => {
         if (!dateFrom && !dateTo) return true;
@@ -1976,7 +2051,16 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         return true;
       })
       .sort((a, b) => {
-        const diff = scoreFor(a, scoreType) - scoreFor(b, scoreType);
+        const scoreA = scoreFor(a, scoreType);
+        const scoreB = scoreFor(b, scoreType);
+        // Unscored always sinks to the bottom regardless of sort direction —
+        // there's no meaningful "highest" or "lowest" placement for a score
+        // that doesn't exist yet, and subtracting a null would just produce
+        // NaN and leave their position undefined.
+        if (scoreA == null && scoreB == null) return 0;
+        if (scoreA == null) return 1;
+        if (scoreB == null) return -1;
+        const diff = scoreA - scoreB;
         return sortDir === 'asc' ? diff : -diff;
       });
   }, [scored, categoryFilter, jobFilter, activeStageFilter, scoreType, scoreMin, scoreMax, dateFrom, dateTo, sortDir]);
@@ -2060,6 +2144,11 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   }).filter(Boolean);
 
   const scoreLabel = SCORE_TYPE_OPTIONS.find((o) => o.value === scoreType)?.label || 'Score';
+  // Same gate the unapplied rows themselves render under, below — needed
+  // here too so an empty `filtered` doesn't wrongly show "No applicants
+  // yet."/"No applicants match these filters" and hide the table (and the
+  // unapplied rows inside it) when there's actually something to show.
+  const unappliedVisible = !isDecisionsTab && !jobFilter && categoryFilter === 'all' && unapplied.length > 0;
 
   return (
     <HrShell active={isDecisionsTab ? 'hr-decisions' : 'hr-applicant-list'} nav={nav} profile={profile}>
@@ -2213,16 +2302,18 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
               </div>
               <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55, textAlign: 'right' }}>
                 {filtered.length} applicant{filtered.length === 1 ? '' : 's'}
+                {unappliedVisible && ` · ${unapplied.length} registered, not yet applied`}
               </div>
               </div>
 
-              {scored.length === 0 ? (
-                <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applicants yet.</p>
-              ) : filtered.length === 0 ? (
-                <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>
-                  No applicants match these filters — try widening the score range or switching score type
-                  (applicants without a {scoreLabel.toLowerCase()} yet are excluded).
-                </p>
+              {filtered.length === 0 && !unappliedVisible ? (
+                scored.length === 0 && unapplied.length === 0 ? (
+                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applicants yet.</p>
+                ) : (
+                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>
+                    No applicants match these filters — try widening the job, category, score range, or date filters above.
+                  </p>
+                )
               ) : isDecisionsTab ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
                   {groupedByJob.map(({ job: groupJob, decisionRows, scheduleRows }) => {
@@ -2428,6 +2519,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                             </AccordionSection>
                                             <AccordionSection icon={VIDEO_ICON} open={isSectionOpen(s.applicationId, 'interview')} label="Video Interview" onClick={() => toggleSection(s.applicationId, 'interview')}>
                                               <InterviewSection
+                                                introVideoPath={a.intro_video_path}
                                                 responses={interviewResponses[s.applicationId] || []}
                                                 evaluations={interviewEvaluations}
                                                 evalStatus={interviewEvalStatus}
@@ -2512,6 +2604,92 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                                 {REOPEN_ICON} Reopen
                                               </Button>
                                             </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                      {/* Registered-but-never-applied accounts — only under
+                          "All Postings"/"All Categories", since neither
+                          filter means anything for someone with no job at
+                          all; narrowing to a specific one should exclude
+                          them the same way it already excludes anyone with a
+                          score outside range. Never shown on the Decisions
+                          tab — there's nothing to decide on here. */}
+                      {unappliedVisible && unapplied.map((u) => {
+                        const applicationId = `${UNAPPLIED_PREFIX}${u.applicantId}`;
+                        const isExpanded = expandedId === applicationId;
+                        const resume = fullApplications[applicationId];
+                        return (
+                          <Fragment key={applicationId}>
+                            <tr
+                              ref={(el) => { rowRefs.current[applicationId] = el; }}
+                              onClick={() => toggleExpand(applicationId)}
+                              className="hover-lift"
+                              style={{ cursor: 'pointer', borderTop: '1px solid var(--border-hairline)', background: isExpanded ? 'var(--surface-page-alt)' : undefined }}
+                            >
+                              {((multiSelectMode && profile?.role === 'hr_personnel') || compareMode) && <td />}
+                              <td style={{ padding: '12px 0', fontSize: 10, opacity: 0.5 }}>
+                                <span style={{ display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>▶</span>
+                              </td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)' }}>
+                                <div style={{ fontWeight: 600 }}>{u.fullName || 'Unnamed'}</div>
+                                <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{u.email}</div>
+                              </td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', opacity: 0.5 }}>—</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', opacity: 0.5 }}>—</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', opacity: 0.5 }}>—</td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-sm)', opacity: 0.5 }}>—</td>
+                              <td style={{ padding: '12px' }}>
+                                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '4px 12px', borderRadius: 999, background: 'var(--surface-page-alt)', color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>Not Applied Yet</span>
+                              </td>
+                              <td style={{ padding: '12px', fontSize: 'var(--text-xs)', opacity: 0.65, whiteSpace: 'nowrap' }}>{new Date(u.registeredAt).toLocaleDateString()}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr key={`${applicationId}-detail`}>
+                                <td colSpan={8 + (((multiSelectMode && profile?.role === 'hr_personnel') || compareMode) ? 1 : 0)} style={{ padding: 0, borderTop: 'none' }}>
+                                  <div style={{ padding: '4px 16px 28px 16px', background: 'var(--surface-page-alt)' }}>
+                                    {!u.hasResume ? (
+                                      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6, padding: '16px 0' }}>Registered an account but never started a resume.</p>
+                                    ) : !resume ? (
+                                      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6, padding: '16px 0' }}>Loading resume…</p>
+                                    ) : (
+                                      <div style={{ padding: '16px 12px 0' }}>
+                                        <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 12px' }}>
+                                          {u.resumeCompleted ? 'Resume on file, no application submitted to any job yet.' : 'Resume started but not yet finished, no application submitted.'}
+                                        </p>
+                                        <DrivingInfo application={resume} />
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                                          {resume.skills?.length > 0 && (
+                                            <AccordionSection
+                                              icon={SKILLS_ICON} open={isSectionOpen(applicationId, 'skills')} label="Skills" count={resume.skills.length}
+                                              onClick={() => toggleSection(applicationId, 'skills')}
+                                              preview={<SkillBadges skills={resume.skills} />}
+                                            >
+                                              <SkillTextList skills={resume.skills} />
+                                            </AccordionSection>
+                                          )}
+                                          {resume.work_experience?.length > 0 && (
+                                            <AccordionSection icon={EXPERIENCE_ICON} open={isSectionOpen(applicationId, 'experience')} label="Experience" count={resume.work_experience.length} onClick={() => toggleSection(applicationId, 'experience')}>
+                                              <ExperienceList items={resume.work_experience} />
+                                            </AccordionSection>
+                                          )}
+                                          {(resume.education?.length > 0 || resume.certifications?.length > 0) && (
+                                            <AccordionSection icon={EDUCATION_ICON} open={isSectionOpen(applicationId, 'education')} label="Education & Certifications" onClick={() => toggleSection(applicationId, 'education')}>
+                                              <EducationList items={resume.education} level={resume.education_level} />
+                                              <CertificationList items={resume.certifications} />
+                                            </AccordionSection>
+                                          )}
+                                          {resume.summary && (
+                                            <AccordionSection icon={NOTE_ICON} open={isSectionOpen(applicationId, 'cover')} label="Professional Summary" onClick={() => toggleSection(applicationId, 'cover')}>
+                                              <p style={{ fontSize: 'var(--text-sm)', lineHeight: 1.6, margin: 0 }}>{resume.summary}</p>
+                                            </AccordionSection>
                                           )}
                                         </div>
                                       </div>

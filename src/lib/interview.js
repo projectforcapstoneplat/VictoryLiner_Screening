@@ -188,6 +188,29 @@ export async function uploadResponseVideo({ applicantId, applicationId, question
   return { data, error };
 }
 
+// Uploads the short, ungraded intro clip and marks it on the application row
+// directly — not a row in interview_responses (see Interview.jsx's
+// IntroRecorder for why this deliberately stays out of the AI scoring
+// pipeline, which only ever reads interview_responses). Applicants have no
+// general UPDATE policy on applications (HR owns that table), so the column
+// write goes through the set_intro_video_path() RPC instead, which only
+// ever touches that one column and only for the caller's own application
+// (see migration 0043_intro_video.sql).
+export async function uploadIntroVideo({ applicantId, applicationId, blob }) {
+  if (blob.size > MAX_UPLOAD_BYTES) {
+    return { error: { message: 'This recording is too large to upload. Please re-record a shorter clip.' } };
+  }
+  const path = `${applicantId}/${applicationId}/intro.webm`;
+  const { error: uploadError } = await supabase.storage
+    .from('interview-videos')
+    .upload(path, blob, { contentType: 'video/webm', upsert: true });
+  if (uploadError) return { error: uploadError };
+
+  const { error } = await supabase.rpc('set_intro_video_path', { p_application_id: applicationId, p_path: path });
+  if (error) return { error };
+  return { data: { intro_video_path: path } };
+}
+
 // True only on the exact update that takes a response set from "not every
 // question answered yet" to "all answered" — compares the pre-update
 // snapshot against the post-update one rather than just checking whether
