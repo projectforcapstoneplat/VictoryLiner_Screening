@@ -227,6 +227,7 @@ function RecentApplicationsTable({ recent, nav, style }) {
   );
 }
 
+
 // A job picker instead of paging through 3 at a time — lets HR jump
 // straight to the posting they actually want, and "All Jobs" folds every
 // posting's pipeline into one combined chart instead of only ever seeing

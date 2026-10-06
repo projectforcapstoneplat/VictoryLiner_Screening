@@ -320,6 +320,15 @@ function normalizeDate(value: unknown): string {
   const v = value.trim();
   if (/^\d{4}-\d{2}$/.test(v)) return `${v}-01`;
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  // A bare year ("2024") is exactly what the extraction schema itself asks
+  // for whenever a resume gives a year-only range (e.g. "2024-2026", no
+  // months) — a genuinely common format, not a parsing failure. This used
+  // to fall through to the catch-all `''` below right alongside actually
+  // unparseable values, silently discarding a perfectly good year-only date
+  // the same way as "Present" or free text, then failing the wizard's own
+  // required-field check on top of that. Defaults to January 1st, same
+  // "missing precision → the 1st" convention as the YYYY-MM case above.
+  if (/^\d{4}$/.test(v)) return `${v}-01-01`;
   return '';
 }
 
@@ -340,12 +349,12 @@ function buildResponseData(parsed: any) {
     skills: Array.isArray(parsed.skills) ? parsed.skills.filter((s: unknown) => typeof s === 'string' && s.trim()) : [],
     // The wizard's Start/End Date fields are native <input type="date">,
     // which silently renders blank for anything that isn't exactly
-    // YYYY-MM-DD — the schema above asks for YYYY-MM (or "Present"/free
-    // text when that's all the resume gives), so without this the date was
-    // captured correctly but never actually visible once it reached the
-    // wizard. Anything that isn't a clean YYYY-MM or already-full date just
-    // becomes empty, same as leaving it blank by hand for an ongoing role
-    // or an unparseable date.
+    // YYYY-MM-DD — the schema above asks for YYYY-MM, or bare YYYY for a
+    // year-only resume, or "Present"/free text when that's all the resume
+    // gives, so without normalizeDate() the date was captured correctly but
+    // never actually visible once it reached the wizard. Only "Present" or
+    // genuinely unparseable text still becomes empty, same as leaving it
+    // blank by hand for an ongoing role.
     workExperience: Array.isArray(parsed.workExperience)
       ? parsed.workExperience.map((w: Record<string, unknown>) => ({
           ...w,

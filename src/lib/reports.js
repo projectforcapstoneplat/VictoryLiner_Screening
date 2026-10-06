@@ -473,6 +473,42 @@ export async function getScoredApplicants() {
   return { data: { scored: raw.scored, jobs: raw.jobs } };
 }
 
+// Registered applicant accounts with a resume on file but zero applications
+// — invisible everywhere else in HR's view, since every other report here
+// (including getScoredApplicants above) is built entirely off the
+// `applications` table. Someone who signs up and fills out a resume but
+// never actually applies to a job has no row there at all. Needs
+// profiles_select_hr_applicants (0042_profiles_select_hr_applicants.sql) —
+// HR's client otherwise has no RLS path to read any profile but its own.
+export async function getUnappliedApplicants() {
+  const [profilesRes, resumesRes, applicationsRes] = await Promise.all([
+    supabase.from('profiles').select('id, full_name, email, created_at').eq('role', 'applicant'),
+    supabase.from('applicant_resumes').select('applicant_id, completed_at'),
+    supabase.from('applications').select('applicant_id'),
+  ]);
+  if (profilesRes.error) return { error: profilesRes.error };
+
+  const appliedIds = new Set((applicationsRes.data || []).map((a) => a.applicant_id));
+  const resumeByApplicant = new Map((resumesRes.data || []).map((r) => [r.applicant_id, r]));
+
+  const data = (profilesRes.data || [])
+    .filter((p) => !appliedIds.has(p.id))
+    .map((p) => {
+      const resume = resumeByApplicant.get(p.id);
+      return {
+        applicantId: p.id,
+        fullName: p.full_name,
+        email: p.email,
+        registeredAt: p.created_at,
+        hasResume: !!resume,
+        resumeCompleted: !!resume?.completed_at,
+      };
+    })
+    .sort((a, b) => new Date(b.registeredAt) - new Date(a.registeredAt));
+
+  return { data };
+}
+
 export async function getPersonnelOverview() {
   const raw = await loadRaw();
   if (raw.error) return { error: raw.error };

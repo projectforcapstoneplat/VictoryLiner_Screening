@@ -68,19 +68,60 @@ const UPLOAD_ICON = <svg width={22} height={22} viewBox="0 0 24 24" fill="none" 
 
 const STEP_CHECK_ICON = <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
 
-// A visible spinning ring while a resume upload is being read + parsed by
-// Gemini — that round-trip can take several seconds, and the earlier
-// "Reading your resume…" text-only swap wasn't enough on its own for it to
-// read as *actively working* rather than possibly stuck.
-const UPLOAD_SPINNER = (
-  <span
-    style={{
-      width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-      border: '2.5px solid var(--pink-200)', borderTopColor: 'var(--action-primary-bg)',
-      display: 'inline-block', animation: 'spin 0.7s linear infinite',
-    }}
-  />
-);
+const SCAN_LINE_WIDTHS = ['64%', '88%', '52%', '78%', '60%', '40%'];
+
+// Shown in place of the upload/build choice while a file is being read +
+// parsed — a document with a light beam sweeping down it, so "Reading your
+// resume…" reads as *actively scanning and extracting*, not just a spinner
+// next to some text. See resumeScanSweep/resumeLinePulse in styles.css.
+function ResumeScanAnimation() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, padding: '20px 0 8px' }}>
+      <div style={{ position: 'relative', width: 132, height: 168, flexShrink: 0, animation: 'floatY 3.2s ease-in-out infinite' }}>
+        <div
+          style={{
+            position: 'absolute', inset: 0, borderRadius: 14, background: 'var(--surface-card)',
+            border: '1.5px solid var(--border-hairline)', boxShadow: '0 10px 30px -12px rgba(0,0,0,0.22)',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 11, padding: '26px 18px 18px',
+          }}
+        >
+          {SCAN_LINE_WIDTHS.map((w, i) => (
+            <span
+              key={i}
+              style={{
+                display: 'block', height: 7, width: w, borderRadius: 4, background: 'var(--pink-200)',
+                animation: 'resumeLinePulse 2.4s ease-in-out infinite', animationDelay: `${i * 0.3}s`,
+              }}
+            />
+          ))}
+          <div
+            style={{
+              position: 'absolute', left: 0, right: 0, top: 0, height: 36,
+              background: 'linear-gradient(180deg, transparent, rgba(220,38,38,0.15) 40%, rgba(220,38,38,0.5) 50%, rgba(220,38,38,0.15) 60%, transparent)',
+              animation: 'resumeScanSweep 2.4s ease-in-out infinite',
+            }}
+          />
+        </div>
+        <span
+          style={{
+            position: 'absolute', bottom: -8, right: -8, width: 34, height: 34, borderRadius: '50%',
+            background: 'var(--action-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 4px 12px -2px rgba(220,38,38,0.5)', animation: 'pulseScale 1.6s ease-in-out infinite',
+          }}
+        >
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+          </svg>
+        </span>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Scanning your resume…</div>
+        <p style={{ fontSize: 'var(--text-sm)', opacity: 0.65, margin: '6px 0 0' }}>Extracting your details. This usually takes a few seconds.</p>
+      </div>
+    </div>
+  );
+}
 
 // One label/value line on the final review screen — plain text, not an
 // input, since this is meant to read as "here's what's about to be saved,"
@@ -792,17 +833,23 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                     handleBack();
                     return;
                   }
-                  // Leaving step 0 back to the choice screen — this can be
-                  // reached both for a brand-new resume (buildMethod already
-                  // set) and for a resume being continued/edited (editing
-                  // already true, buildMethod still null since the choice
-                  // screen was skipped on load) — either way, resetting both
-                  // is what actually reveals the choice screen again.
+                  // At step 0, "back" means two different things depending on
+                  // how this session got here. An existing resume being
+                  // edited/continued (editing already true on load) never
+                  // saw the choice screen at all this session — there's
+                  // nothing to go "back" to inside the wizard, so this
+                  // leaves it entirely, back to My Resume. A brand-new
+                  // resume (buildMethod set by actually clicking a choice)
+                  // never sets editing, so it falls through to resetting
+                  // buildMethod, which reveals that choice screen again.
+                  if (editing) {
+                    nav('my-resume');
+                    return;
+                  }
                   setBuildMethod(null);
-                  setEditing(false);
                 }}
                 className="btn-animate"
-                aria-label={reviewing ? 'Back to edit' : step > 0 ? 'Back to previous step' : 'Back to resume options'}
+                aria-label={reviewing ? 'Back to edit' : step > 0 ? 'Back to previous step' : editing ? 'Back to My Resume' : 'Back to resume options'}
                 style={{
                   position: 'absolute', top: 'clamp(16px, 3vw, 28px)', left: 'clamp(16px, 3vw, 28px)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: '50%',
@@ -896,24 +943,6 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
               </div>
             ) : !editing && buildMethod === null ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
-                <button
-                  onClick={() => !uploading && setBuildMethod('manual')}
-                  className="hover-lift btn-animate"
-                  disabled={uploading}
-                  style={{
-                    textAlign: 'left', cursor: uploading ? 'default' : 'pointer', border: '1px solid var(--border-hairline)', borderRadius: 16,
-                    padding: 24, background: 'var(--surface-page)', display: 'flex', flexDirection: 'column', gap: 12, fontFamily: 'inherit',
-                    opacity: uploading ? 0.5 : 1,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{PENCIL_ICON}</span>
-                    <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Build It Manually</div>
-                  </div>
-                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
-                    Fill out a short guided form, one section at a time. Takes about 5 minutes.
-                  </p>
-                </button>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -921,25 +950,45 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   onChange={handleFileSelected}
                   style={{ display: 'none' }}
                 />
-                <button
-                  onClick={handleUploadClick}
-                  className="hover-lift btn-animate"
-                  disabled={uploading}
-                  style={{
-                    textAlign: 'left', cursor: uploading ? 'default' : 'pointer', border: '1px solid var(--border-hairline)', borderRadius: 16,
-                    padding: 24, background: 'var(--surface-page)', display: 'flex', flexDirection: 'column', gap: 12, fontFamily: 'inherit',
-                    opacity: uploading ? 0.7 : 1,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{uploading ? UPLOAD_SPINNER : UPLOAD_ICON}</span>
-                    <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Upload My Resume</div>
-                  </div>
-                  <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
-                    {uploading ? 'Reading your resume…' : "Upload a PDF or Word file and we'll fill this out for you."}
-                  </p>
-                </button>
-                {uploadError && <FormError message={uploadError} />}
+                {uploading ? (
+                  <ResumeScanAnimation />
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setBuildMethod('manual')}
+                      className="hover-lift btn-animate"
+                      style={{
+                        textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border-hairline)', borderRadius: 16,
+                        padding: 24, background: 'var(--surface-page)', display: 'flex', flexDirection: 'column', gap: 12, fontFamily: 'inherit',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                        <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{PENCIL_ICON}</span>
+                        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Build It Manually</div>
+                      </div>
+                      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
+                        Fill out a short guided form, one section at a time. Takes about 5 minutes.
+                      </p>
+                    </button>
+                    <button
+                      onClick={handleUploadClick}
+                      className="hover-lift btn-animate"
+                      style={{
+                        textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border-hairline)', borderRadius: 16,
+                        padding: 24, background: 'var(--surface-page)', display: 'flex', flexDirection: 'column', gap: 12, fontFamily: 'inherit',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                        <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{UPLOAD_ICON}</span>
+                        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Upload My Resume</div>
+                      </div>
+                      <p style={{ fontSize: 'var(--text-sm)', opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
+                        Upload a PDF or Word file and we'll fill this out for you.
+                      </p>
+                    </button>
+                    {uploadError && <FormError message={uploadError} />}
+                  </>
+                )}
               </div>
             ) : (
               // minHeight keeps a sparse step (Skills — just one field) from
@@ -1236,7 +1285,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
       <ConfirmModal
         open={showUploadConsent}
         title="Extract My Resume Details"
-        message="Once you pick a PDF or Word file, we'll read it and automatically fill in your name, contact details, work experience, education, skills, and certifications below. You can review and edit everything before saving, and nothing is saved until then."
+        message="We'll read your file and auto-fill this form for you. You can review and edit everything before anything is saved."
         confirmLabel="Accept & Choose File"
         cancelLabel="Decline"
         confirmDisabled={!uploadConsentChecked}
@@ -1255,7 +1304,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
             onChange={(e) => setUploadConsentChecked(e.target.checked)}
             style={{ marginTop: 3, flexShrink: 0 }}
           />
-          <span>I give my confirmation and accept that Victory Liner Careers may extract this information from my uploaded file.</span>
+          <span>I agree to let Victory Liner Careers extract this information from my uploaded file.</span>
         </label>
         {uploadConsentWarningVisible && !uploadConsentChecked && (
           <div style={{ marginTop: 10 }}>

@@ -143,6 +143,24 @@ a {
   100% { transform: translate(-16px, -12px) scale(1.7); opacity: 0; }
 }
 
+/* Resume upload — a document being scanned top-to-bottom, so an applicant
+   watching "Reading your resume…" sees something that actually reads as
+   *scanning and extracting* rather than an ambiguous spinner. The beam
+   sweeps the full card height on a loop; each text line pulses brighter in
+   turn via a staggered animation-delay (set inline per line, proportional to
+   its vertical position) so the brighten wave roughly tracks the beam. */
+@keyframes resumeScanSweep {
+  0% { transform: translateY(-40px); opacity: 0; }
+  10% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(190px); opacity: 0; }
+}
+
+@keyframes resumeLinePulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 /* FormError (src/components/feedback/FormError) — drops in, then settles
    with a small shake, so a rejected sign-in/sign-up actually draws the eye
    instead of reading as a quiet line of red text. One combined keyframe

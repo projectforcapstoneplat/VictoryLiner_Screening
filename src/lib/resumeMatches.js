@@ -33,6 +33,31 @@ export async function runResumeMatching() {
   }
 }
 
+// match-resume-to-jobs only scores up to MAX_JOBS_PER_CALL jobs per call
+// (its own cap against burning through AI quota in one request) — a single
+// runResumeMatching() call silently leaves anything past that cap unscored,
+// which used to mean a resume sitting in a pool of more open jobs than that
+// cap (or one that's missed several rounds of newly-published jobs) could
+// stay permanently short of full coverage: a weaker-fitting job that
+// happened to get scored early could show up as a match while genuinely
+// better-fitting jobs, simply never evaluated yet, couldn't appear at all.
+// This loops automatically instead of leaving that to repeated manual
+// clicks — each call's own response says exactly how many jobs are still
+// unscored (remainingJobs) and how many this call actually scored
+// (scoredThisCall), so the loop keeps going until either nothing's left or
+// a call makes no forward progress (a stuck/failing job would otherwise
+// retry forever). The iteration cap is a hard safety ceiling, not a tuned
+// limit — comfortably past any realistic number of open jobs today.
+export async function runFullResumeMatching() {
+  let result = await runResumeMatching();
+  let iterations = 1;
+  while (!result.error && result.data.remainingJobs > 0 && result.data.scoredThisCall > 0 && iterations < 6) {
+    result = await runResumeMatching();
+    iterations += 1;
+  }
+  return result;
+}
+
 // Called whenever the applicant saves changes to their resume (ResumeForm.jsx)
 // — cached scores were computed against the *old* resume, so they'd be stale
 // and misleading left in place. Deleting them means the next visit to the
