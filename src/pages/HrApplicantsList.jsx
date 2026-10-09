@@ -324,6 +324,27 @@ function matchesStage(s, stage) {
   return true;
 }
 
+// Matches the Status column's own display label exactly (see statusMetaFor
+// below) — 'interview_stage' alone isn't enough to tell "Interview Stage"
+// (not yet recorded) apart from "Awaiting Decision" (recorded, waiting on
+// HR's call), so this splits on interviewCompleted the same way that
+// function does, instead of comparing against a status string the UI
+// doesn't actually show anywhere.
+const STATUS_FILTER_OPTIONS = [
+  { value: 'submitted', label: 'Awaiting Review' },
+  { value: 'interview_stage_pending', label: 'Interview Stage' },
+  { value: 'interview_stage_done', label: 'Awaiting Decision' },
+  { value: 'advanced', label: 'Advanced' },
+  { value: 'declined', label: 'Declined' },
+];
+
+function matchesStatusFilter(s, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'interview_stage_pending') return s.status === 'interview_stage' && !s.interviewCompleted;
+  if (filter === 'interview_stage_done') return s.status === 'interview_stage' && s.interviewCompleted;
+  return s.status === filter;
+}
+
 // `emphasis` — used for the Overall Score, the actual ranking number (mean
 // of resume + interview, reports.js's combineScore) that the "Score Type"
 // filter/sort dropdown defaults to and every table row is sorted by, but
@@ -850,12 +871,6 @@ const SCHEDULE_FIELD_STYLE = {
   background: 'var(--surface-field)', boxShadow: 'var(--shadow-field-inset)', border: 'none', borderRadius: 8, color: 'var(--text-primary)',
 };
 
-// Only these three actually have HR staff available to conduct an in-person
-// interview — a free-text field let a location get typed in that nobody
-// could actually staff.
-const SCHEDULE_LOCATIONS = ['Baguio', 'Caloocan', 'Cubao'];
-const SCHEDULE_SELECT_STYLE = { ...SCHEDULE_FIELD_STYLE, ...DROPDOWN_ARROW_STYLE, paddingRight: 40, fontWeight: 600 };
-
 const CAL_NAV_BTN_STYLE = {
   width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer',
   background: 'var(--surface-page-alt)', color: 'var(--text-primary)',
@@ -1055,7 +1070,11 @@ function InterviewCalendarPicker({ value, onChange, excludeApplicationId }) {
 function SchedulePanel({ application: a, onSave, saving }) {
   const [editing, setEditing] = useState(!a.scheduled_interview_at);
   const [dateTime, setDateTime] = useState(a.scheduled_interview_at ? toLocalInputValue(a.scheduled_interview_at) : '');
-  const [location, setLocation] = useState(a.scheduled_interview_location || '');
+  // Every in-person interview is held at the same terminal — no HR staff
+  // are available to conduct one anywhere else — so this is fixed, not a
+  // choice. Was a 3-option dropdown (Baguio/Caloocan/Cubao); narrowed to
+  // Cubao only.
+  const location = 'Cubao';
   const [confirmOpen, setConfirmOpen] = useState(false);
   // 'sending' | 'sent' | 'error' — send-schedule-reminders is otherwise
   // cron-only, no way to see what the "your interview is tomorrow" email
@@ -1144,12 +1163,8 @@ function SchedulePanel({ application: a, onSave, saving }) {
     );
   }
 
-  const ready = Boolean(dateTime) && Boolean(location);
-  const lockReason = !dateTime && !location
-    ? 'Pick a date, time, and location before scheduling.'
-    : !dateTime
-      ? 'Pick a date and time before scheduling.'
-      : 'Pick a location before scheduling.';
+  const ready = Boolean(dateTime);
+  const lockReason = 'Pick a date and time before scheduling.';
 
   function handleScheduleClick() {
     if (!ready) {
@@ -1190,15 +1205,7 @@ function SchedulePanel({ application: a, onSave, saving }) {
           looking stranded off to one side. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 360, margin: '8px auto 0' }}>
         <InterviewCalendarPicker value={dateTime} onChange={setDateTime} excludeApplicationId={a.id} />
-        <select value={location} onChange={(e) => setLocation(e.target.value)} style={SCHEDULE_SELECT_STYLE}>
-          {/* Not `disabled` — a disabled option renders visibly dimmed/
-              grayed inside the closed select box in every major browser,
-              no CSS override reaches that. Schedule Interview already
-              stays locked until a real location is picked (see below), so
-              leaving this reselectable costs nothing. */}
-          <option value="">Select a location</option>
-          {SCHEDULE_LOCATIONS.map((loc) => <option key={loc} value={loc}>{loc}</option>)}
-        </select>
+        <div style={{ ...SCHEDULE_FIELD_STYLE, color: 'var(--text-primary)', opacity: 0.85 }}>{location}</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span key={lockWarning} className={lockWarning > 0 && !ready ? 'shake-row' : undefined} style={{ flex: 1, display: 'block' }}>
             <Button
@@ -1478,6 +1485,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   const [error, setError] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [jobFilter, setJobFilter] = useState(job || null);
+  const [statusFilter, setStatusFilter] = useState('all');
   const [scoreType, setScoreType] = useState('total');
   const [scoreMin, setScoreMin] = useState(0);
   const [scoreMax, setScoreMax] = useState(100);
@@ -2027,6 +2035,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         `View: ${isDecisionsTab ? 'Decisions (Awaiting Your Decision)' : 'Applicants'}`,
         `Job Posting: ${jobFilter?.title || 'All Postings'}`,
         `Job Category: ${categoryFilter === 'all' ? 'All Categories' : categoryFilter}`,
+        `Status: ${statusFilter === 'all' ? 'All Statuses' : STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter)?.label}`,
         `Score Type: ${scoreLabel}`,
         `Score Range: ${scoreMin}% - ${scoreMax}%`,
         `Applied Date Range: ${dateFrom || 'Any'} to ${dateTo || 'Any'}`,
@@ -2052,6 +2061,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
     return scored
       .filter((s) => categoryFilter === 'all' || s.job?.category === categoryFilter)
       .filter((s) => !jobFilter || s.job?.id === jobFilter.id)
+      .filter((s) => matchesStatusFilter(s, statusFilter))
       .filter((s) => matchesStage(s, activeStageFilter))
       .filter((s) => {
         // A missing score (evaluation still pending, or failed) always
@@ -2087,7 +2097,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         const diff = scoreA - scoreB;
         return sortDir === 'asc' ? diff : -diff;
       });
-  }, [scored, categoryFilter, jobFilter, activeStageFilter, scoreType, scoreMin, scoreMax, dateFrom, dateTo, sortDir]);
+  }, [scored, categoryFilter, jobFilter, statusFilter, activeStageFilter, scoreType, scoreMin, scoreMax, dateFrom, dateTo, sortDir]);
 
   // Everyone bulk-decline could actually touch, given whatever filters (job,
   // category, score range) are currently narrowing `filtered` — so setting
@@ -2292,6 +2302,13 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                   <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} style={SELECT_STYLE}>
                     <option value="all">All Categories</option>
                     {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-xs)' }}>
+                  Status
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={SELECT_STYLE}>
+                    <option value="all">All Statuses</option>
+                    {STATUS_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-xs)' }}>

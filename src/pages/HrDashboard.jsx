@@ -146,6 +146,11 @@ export function HrDashboard({ nav, profile }) {
   // as every other destructive action in this app: the native dialog can't
   // be styled and reads as generic browser chrome, not this app.
   const [pendingDelete, setPendingDelete] = useState(null);
+  // A generic single-button info dialog — result of a "Re-check Matches"
+  // run, or an explanation for why a delete was blocked — null when there's
+  // nothing to show. Branded ConfirmModal (hideCancel, see its own comment)
+  // instead of window.alert(), same reasoning as pendingDelete above.
+  const [infoModal, setInfoModal] = useState(null);
 
   const reload = () => {
     setLoading(true);
@@ -173,9 +178,9 @@ export function HrDashboard({ nav, profile }) {
       // this just failed with nothing shown — the list would re-render
       // with the job still sitting right there and no explanation why.
       const message = error.code === '23503'
-        ? `"${job.title}" already has applicants, so it can't be deleted — close it instead (Job Openings keeps a full record of who applied), or remove its applications first if you really need it gone.`
+        ? `"${job.title}" already has applicants, so it can't be deleted. Close it instead (Job Openings keeps a full record of who applied), or remove its applications first if you really need it gone.`
         : `Could not delete "${job.title}": ${error.message}`;
-      window.alert(message);
+      setInfoModal({ title: "Can't Delete This Posting", message });
       return;
     }
     reload();
@@ -190,7 +195,10 @@ export function HrDashboard({ nav, profile }) {
     // on saving a draft), since a draft can legitimately still be a work in
     // progress.
     if (status === 'published' && !job.description?.trim()) {
-      window.alert(`"${job.title}" needs a job description before it can be published — the AI match scoring relies on it for real context, not just the weighted keyword list. Edit the posting to add one first.`);
+      setInfoModal({
+        title: 'Job Description Needed',
+        message: `"${job.title}" needs a job description before it can be published. The AI match scoring relies on it for real context, not just the weighted keyword list. Edit the posting to add one first.`,
+      });
       return;
     }
     await setJobStatus(job.id, status);
@@ -205,7 +213,12 @@ export function HrDashboard({ nav, profile }) {
     // gets surfaced — otherwise it fails with zero visible symptom.
     if (status === 'published') {
       matchJobToAllResumes(job.id).then(({ error }) => {
-        if (error) window.alert(`"${job.title}" is published, but automatic applicant matching failed: ${error}\n\nUse "Re-check Matches" on this job once the issue is resolved.`);
+        if (error) {
+          setInfoModal({
+            title: 'Automatic Matching Failed',
+            message: `"${job.title}" is published, but automatic applicant matching failed: ${error}. Use "Re-check Matches" on this job once the issue is resolved.`,
+          });
+        }
       });
     }
   };
@@ -224,17 +237,22 @@ export function HrDashboard({ nav, profile }) {
     const { data, error } = await matchJobToAllResumes(job.id);
     setRecheckingId(null);
     if (error) {
-      window.alert(`Could not re-check matches: ${error}`);
+      setInfoModal({ title: 'Could Not Re-check Matches', message: error });
       return;
     }
     if (data.scored === 0) {
-      window.alert('Everyone with a completed resume was already scored for this job — nothing left to re-check.');
+      setInfoModal({
+        title: 'Nothing to Re-check',
+        message: 'Everyone with a completed resume was already scored for this job — nothing left to re-check.',
+      });
       return;
     }
-    window.alert(
-      `Scored ${data.scored} more applicant${data.scored === 1 ? '' : 's'} against "${job.title}."` +
-      (data.notified > 0 ? ` ${data.notified} qualified and got notified by email.` : ''),
-    );
+    setInfoModal({
+      title: 'Matches Updated',
+      message:
+        `Scored ${data.scored} more applicant${data.scored === 1 ? '' : 's'} against "${job.title}."` +
+        (data.notified > 0 ? ` ${data.notified} qualified and got notified by email.` : ''),
+    });
   };
 
   const closingSoonCount = useMemo(
@@ -266,6 +284,15 @@ export function HrDashboard({ nav, profile }) {
         cancelLabel="Cancel"
         onConfirm={handleDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <ConfirmModal
+        open={infoModal !== null}
+        title={infoModal?.title}
+        message={infoModal?.message}
+        confirmLabel="OK"
+        hideCancel
+        onConfirm={() => setInfoModal(null)}
+        onCancel={() => setInfoModal(null)}
       />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>

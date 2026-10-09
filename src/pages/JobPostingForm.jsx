@@ -496,7 +496,7 @@ export function JobPostingForm({ job, profile, nav }) {
     // happening if HR later also clicks Publish again from Job Openings.
     if (!isEdit) {
       matchJobToAllResumes(savedJob.id).then(({ error }) => {
-        if (error) window.alert(`"${savedJob.title}" is published, but automatic applicant matching failed: ${error}\n\nUse "Re-check Matches" on this job from Job Openings once the issue is resolved.`);
+        if (error) window.alert(`"${savedJob.title}" is published, but automatic applicant matching failed: ${error}.\n\nUse "Re-check Matches" on this job from Job Openings once the issue is resolved.`);
       });
     }
     // Job Openings — not the dashboard — is where this posting actually
