@@ -86,6 +86,24 @@ export async function updateApplicationStatus(applicationId, status, decidedBy) 
     update.scheduled_interview_set_by = null;
     update.scheduled_interview_set_at = null;
   }
+
+  // Captured before the write so the post-write check below can tell
+  // whether THIS advance is what tipped the job's open positions over the
+  // edge (see the auto-draft trigger, migration 0046) — without this,
+  // advancing someone on a job that's already filled-and-drafted would
+  // re-notify HR every single time instead of just once.
+  let jobIdForAutoDraftCheck = null;
+  let jobWasAlreadyUnpublished = true;
+  if (status === 'advanced') {
+    const { data: before } = await supabase
+      .from('applications')
+      .select('job_id, job_postings(status)')
+      .eq('id', applicationId)
+      .single();
+    jobIdForAutoDraftCheck = before?.job_id || null;
+    jobWasAlreadyUnpublished = before?.job_postings?.status !== 'published';
+  }
+
   const { data, error } = await supabase
     .from('applications')
     .update(update)
@@ -96,7 +114,34 @@ export async function updateApplicationStatus(applicationId, status, decidedBy) 
   if (error) return { data: null, error };
 
   await supabase.from('application_decision_log').insert({ application_id: applicationId, decided_by: decidedBy, status });
+
+  if (jobIdForAutoDraftCheck && !jobWasAlreadyUnpublished) {
+    notifyIfJobAutoDrafted(jobIdForAutoDraftCheck);
+  }
+
   return { data, error: null };
+}
+
+// Best-effort, same reasoning as the other notify* functions below — the
+// trigger (migration 0046) already did the actual auto-draft as part of the
+// update above; this just tells HR it happened. Re-checks the job's status
+// itself (rather than trusting the caller) since the trigger only acts when
+// the target is genuinely reached — most advances don't trigger it at all.
+async function notifyIfJobAutoDrafted(jobId) {
+  try {
+    const { data: job } = await supabase.from('job_postings').select('status').eq('id', jobId).single();
+    if (job?.status !== 'draft') return;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return;
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-job-filled-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ jobId }),
+    });
+  } catch {
+    // Notification is a courtesy, not a requirement — never surface this.
+  }
 }
 
 // HR schedules a personal (in-person) interview for an applicant who's

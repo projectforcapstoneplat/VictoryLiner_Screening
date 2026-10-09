@@ -9,6 +9,11 @@ import { Button } from '../Button/Button.jsx';
 
 export function ConfirmModal({
   open, title, message, children, confirmLabel = 'Continue', cancelLabel = 'Cancel', confirmDisabled = false, onConfirmBlocked, maxWidth = 420, onConfirm, onCancel,
+  // For a plain informational dialog (replacing window.alert, not
+  // window.confirm) — a Cancel button next to a single piece of
+  // acknowledge-and-close information has nothing to cancel. Every existing
+  // caller leaves this unset and keeps the normal two-button layout.
+  hideCancel = false,
 }) {
   if (!open) return null;
   // Rendered into document.body via a portal rather than wherever this
@@ -46,7 +51,7 @@ export function ConfirmModal({
             existing plain confirm/cancel caller is unaffected. */}
         {children && <div style={{ marginBottom: 22 }}>{children}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <Button variant="outline" size="sm" onClick={onCancel}>{cancelLabel}</Button>
+          {!hideCancel && <Button variant="outline" size="sm" onClick={onCancel}>{cancelLabel}</Button>}
           {/* Native `disabled` unless the caller supplies onConfirmBlocked —
               a truly disabled button swallows the click entirely, so there's
               no way to tell someone *why* nothing happened (e.g. a required
