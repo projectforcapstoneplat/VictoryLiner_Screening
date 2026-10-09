@@ -17,6 +17,8 @@ import { friendlyAuthError } from '../lib/authErrors.js';
 
 const HR_ROLES = ['hr_personnel', 'hr_head'];
 
+const LOCK_ICON = <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
+
 export function ResetPassword({ nav }) {
   const [password, setPassword] = useState('');
   const [verifyPassword, setVerifyPassword] = useState('');
@@ -67,9 +69,15 @@ export function ResetPassword({ nav }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
-      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} /></div>
+      <div style={{ padding: '30px 60px 0' }} className="page-header-wrap"><Header nav={nav} links={[]} /></div>
       <section style={{ maxWidth: 1065, margin: '60px auto 0', padding: '0 20px' }}>
-        <div style={{ background: 'var(--surface-card)', borderRadius: 4, padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: '30px auto 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }} className="auth-card">
+        <div
+          className="auth-card fade-in-up"
+          style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: '60px 80px', maxWidth: 900, boxSizing: 'border-box', margin: '30px auto 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}
+        >
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--pink-100)', color: 'var(--action-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {LOCK_ICON}
+          </div>
           <h2 style={{ fontWeight: 700, fontSize: 'var(--text-xl)', margin: '0 0 4px' }}>Set a New Password</h2>
           {done ? (
             <div style={{ width: '100%', maxWidth: 525, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 16 }}>
