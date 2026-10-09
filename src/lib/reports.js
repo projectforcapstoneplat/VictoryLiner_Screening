@@ -216,10 +216,11 @@ function buildWeeklyVolume(timestamps, weeks = 8) {
 // measure to, so including it would understate the real average. One
 // decimal place (not rounded to a whole day) since this is usually a small
 // enough number that the fraction is the meaningful part of it.
-// `outcomeFilter` narrows to just 'advanced' or just 'declined' — used to
-// compare whether one kind of call tends to take longer than the other,
-// rather than only ever seeing one blended average.
-function averageTimeToDecision(scored, decisionLog, outcomeFilter = null) {
+// `outcomeFilter` narrows to just 'advanced' or just 'declined' — shared by
+// averageTimeToDecision below and buildTimeToHireDistribution, so both read
+// off the same application->decided-at resolution instead of each
+// re-deriving it slightly differently.
+function decisionDays(scored, decisionLog, outcomeFilter = null) {
   const decidedAtByApp = new Map();
   for (const d of decisionLog) {
     if (d.status !== 'advanced' && d.status !== 'declined') continue;
@@ -234,8 +235,40 @@ function averageTimeToDecision(scored, decisionLog, outcomeFilter = null) {
     const diff = (new Date(decidedAt).getTime() - new Date(s.createdAt).getTime()) / DAY_MS;
     if (diff >= 0) days.push(diff);
   }
+  return days;
+}
+
+function averageTimeToDecision(scored, decisionLog, outcomeFilter = null) {
+  const days = decisionDays(scored, decisionLog, outcomeFilter);
   if (!days.length) return null;
   return Math.round((days.reduce((sum, d) => sum + d, 0) / days.length) * 10) / 10;
+}
+
+// How many days each final call actually took, bucketed — a single average
+// hides whether decisions cluster tightly around it or swing wildly (e.g.
+// mostly same-day with one outlier at 3 weeks averages out identically to
+// a steady ~5 days each time), so this is the more honest picture of actual
+// turnaround for HR Head's dashboard. Same bucket-table shape as
+// SCORE_BUCKETS/buildScoreDistribution above, for the same reason: a fixed
+// set of ranges stays stable from one report period to the next instead of
+// the axis reshaping itself around whatever happens to be in range.
+// Upper bound of each bucket is exclusive (except the last) so a value
+// sitting exactly on a boundary — e.g. precisely 4.0 days — lands in only
+// one bucket, not both.
+const TIME_TO_HIRE_BUCKETS = [
+  { label: 'Same day', min: 0, max: 1 },
+  { label: '1-3 days', min: 1, max: 4 },
+  { label: '4-7 days', min: 4, max: 8 },
+  { label: '1-2 weeks', min: 8, max: 15 },
+  { label: '2+ weeks', min: 15, max: Infinity },
+];
+
+function buildTimeToHireDistribution(scored, decisionLog) {
+  const days = decisionDays(scored, decisionLog);
+  return TIME_TO_HIRE_BUCKETS.map((b) => ({
+    label: b.label,
+    count: days.filter((d) => d >= b.min && d < b.max).length,
+  }));
 }
 
 // Applicants whose video interview just finished (every question answered
@@ -442,13 +475,11 @@ export async function getHeadOverview({ from, to, category } = {}) {
     awaitingFinalDecision: applications.filter((a) => a.status === 'interview_stage').length,
   };
 
+  // Still used by the printable/exportable report doc below (a single
+  // headline figure reads better in that plain-text summary), even though
+  // the live dashboard card now shows the fuller distribution instead.
   const avgTimeToHire = averageTimeToDecision(scored, decisionLog);
-  // Same metric, split by outcome — reveals whether advances or declines
-  // tend to take systematically longer to reach.
-  const avgTimeToHireByOutcome = {
-    advanced: averageTimeToDecision(scored, decisionLog, 'advanced'),
-    declined: averageTimeToDecision(scored, decisionLog, 'declined'),
-  };
+  const timeToHireDistribution = buildTimeToHireDistribution(scored, decisionLog);
   const recentInterviews = buildRecentInterviews(scored);
 
   return {
@@ -456,7 +487,7 @@ export async function getHeadOverview({ from, to, category } = {}) {
       jobStats, applicantCount: applications.length, funnel, scores, sentiment,
       topCandidates, jobBreakdown, hrActivity, trends,
       resumeScoreDistribution, interviewScoreDistribution, categoryBreakdown, weeklyApplications, decisionOutcomes,
-      pendingBreakdown, avgTimeToHire, avgTimeToHireByOutcome, recentInterviews,
+      pendingBreakdown, avgTimeToHire, timeToHireDistribution, recentInterviews,
       range: { from: from || null, to: to || null },
       allCategories, category: hasCategory ? category : null,
     },

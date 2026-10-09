@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
     // minutes. This was the one applicant-facing write with no cap at all,
     // unlike every AI-calling function here, which already checks this.
     if (await checkRateLimit(callerClient, user.id, 'quick-apply', 10, 60)) {
-      return json({ error: 'Too many applications submitted — please wait a bit and try again.' }, 429);
+      return json({ error: 'Too many applications submitted. Please wait a bit and try again.' }, 429);
     }
 
     const { jobId } = await req.json();
@@ -103,8 +103,8 @@ Deno.serve(async (req) => {
       const inProgress = accepted ?? activeElsewhere[0];
       const otherTitle = inProgress.job_postings?.title || 'another role';
       const message = accepted
-        ? `You've already been accepted for ${otherTitle} — new applications are closed while that stands.`
-        : `You're still progressing through the video interview for ${otherTitle} — finish that one before applying elsewhere.`;
+        ? `You've already been accepted for ${otherTitle}. New applications are closed for now.`
+        : `You're still completing your video interview for ${otherTitle}. Finish that one first.`;
       return json({ error: message }, 409);
     }
 

@@ -19,6 +19,14 @@ import { measureDownloadSpeedMbps, classifySpeed } from '../lib/connectionSpeed.
 const READY_SECONDS = 5;
 const RECORD_SECONDS = 60;
 const INTRO_RECORD_SECONDS = 30;
+// Shared across all 3 attempts on one question, not per attempt — closes
+// the gap where an applicant could see a question, leave the tab open
+// indefinitely to look up an answer elsewhere, then come back and record a
+// rehearsed take. Starts the moment the question is first revealed
+// (first_shown_at, persisted server-side so closing the tab doesn't reset
+// it) and keeps running until they submit, regardless of how many of their
+// 3 attempts they've actually used.
+const QUESTION_TIME_BUDGET_SECONDS = 300;
 
 const ARROW_LEFT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>;
 
@@ -38,32 +46,120 @@ const INFO_ICONS = {
 const INTERVIEW_INSTRUCTIONS = [
   { icon: 'eye', title: 'Questions stay hidden until you click Start', body: 'This keeps things fair for every applicant: nobody gets extra time to prepare or look up an answer beforehand.' },
   { icon: 'clock', title: '5 seconds to prepare, then 1 minute to answer', body: 'Once you click Start, a short countdown gives you a moment to get ready before recording begins automatically.' },
-  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record, before or after submitting, up to 3 times total for that one question.' },
+  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record, before or after submitting, up to 3 times total for that one question — but you have 5 minutes total per question to use them, so don’t step away once you’ve started.' },
   { icon: 'camera', title: "We'll check your camera & mic first", body: "Right after this, you'll confirm HR can actually see and hear you before any question starts recording." },
   { icon: 'check', title: 'Once every question is submitted, HR reviews it', body: "There's no editing an answer after that, so take your time on each take before hitting Submit." },
 ];
 
-// A gate, not just information — the applicant has to click through this
-// screen before DeviceCheck even loads, so the rules (hidden questions,
-// timing, attempt limits) are seen once, deliberately, instead of sitting in
-// a paragraph easy to skip past on the way to starting.
-function InterviewInstructions({ onContinue }) {
-  // Video is optional, not a hard requirement — a walkthrough covering the
-  // same points as the bullets below (the text is a lot to take in as a
-  // wall of bullets). Points at a static file path
-  // (public/videos/interview-instructions.mp4); onError hides the player so
-  // a missing file never shows up as a broken box, it just silently falls
-  // back to text-only.
-  const [videoAvailable, setVideoAvailable] = useState(true);
+// One rule's worth of content for the step-through walkthrough below —
+// pulled out so the timing step (index 1) can grow a live countdown demo
+// underneath its body text without cluttering the step-switching logic in
+// InterviewInstructions itself.
+function InstructionStepCard({ item, isTimingStep }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18, textAlign: 'center', width: '100%', maxWidth: 440 }}>
+      <span style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {INFO_ICONS[item.icon]}
+      </span>
+      <div>
+        <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700 }}>{item.title}</div>
+        <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginTop: 8, lineHeight: 1.6 }}>{item.body}</div>
+      </div>
+      {isTimingStep && <CountdownPreview />}
+    </div>
+  );
+}
+
+// A harmless, clickable rehearsal of the exact "get ready" countdown the
+// real recording screen runs (same READY_SECONDS, same CountdownRing
+// component below) — so "5 seconds to prepare" is something the applicant
+// has actually watched happen once, not just a sentence skimmed past on
+// the way to the real thing.
+function CountdownPreview() {
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  const [justFinished, setJustFinished] = useState(false);
+
+  useEffect(() => {
+    if (secondsLeft === null) return;
+    if (secondsLeft <= 0) {
+      setJustFinished(true);
+      const t = setTimeout(() => {
+        setJustFinished(false);
+        setSecondsLeft(null);
+      }, 1800);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secondsLeft]);
 
   return (
-    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(28px, 5vw, 48px)', display: 'flex', flexDirection: 'column', gap: 26, alignItems: 'center' }}>
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 4 }}>
+      {secondsLeft === null && !justFinished ? (
+        <Button variant="outline" size="sm" onClick={() => setSecondsLeft(READY_SECONDS)}>Try the Countdown</Button>
+      ) : (
+        <div style={{ width: '100%', background: '#15100f', borderRadius: 14, padding: '22px 0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {justFinished ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <span className="recording-dot-pulse" style={{ width: 14, height: 14, borderRadius: '50%', background: 'var(--red-700)' }} />
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: '#fff' }}>Recording would start here</span>
+            </div>
+          ) : (
+            <CountdownRing secondsLeft={secondsLeft} totalSeconds={READY_SECONDS} />
+          )}
+        </div>
+      )}
+      <span style={{ fontSize: 'var(--text-xs)', opacity: 0.55 }}>Just a preview. No camera, nothing is recorded.</span>
+    </div>
+  );
+}
+
+// A gate, not just information — the applicant has to step through this
+// screen, one rule at a time, before DeviceCheck even loads. Stepping
+// through (rather than the old all-five-at-once bullet list) forces each
+// rule to actually be read instead of skimmed, and the dot nav below can
+// only ever jump back to a step already reached — never ahead — so there's
+// no skipping straight to "I Understand" without passing every rule once.
+function InterviewInstructions({ onContinue }) {
+  // Video is optional, not a hard requirement — a walkthrough covering the
+  // same points as the steps below. Points at a static file path
+  // (public/videos/interview-instructions.mp4); onError hides the player so
+  // a missing file never shows up as a broken box, it just silently falls
+  // back to the step-through version.
+  const [videoAvailable, setVideoAvailable] = useState(true);
+  const [step, setStep] = useState(0);
+  const [maxReached, setMaxReached] = useState(0);
+  const lastStep = INTERVIEW_INSTRUCTIONS.length - 1;
+  const current = INTERVIEW_INSTRUCTIONS[step];
+
+  const goTo = (i) => {
+    if (i <= maxReached) setStep(i);
+  };
+  const handleNext = () => {
+    const next = Math.min(step + 1, lastStep);
+    setStep(next);
+    setMaxReached((m) => Math.max(m, next));
+  };
+
+  return (
+    // No width cap here — matches DeviceCheck right after this screen in the
+    // same flow, whose card has none either and just fills the section. A
+    // capped maxWidth here (560, matching the video's own width) used to
+    // leave this card sitting flush-left with a wide empty gap beside it,
+    // since nothing ever centered it within the wider section it sits in —
+    // DeviceCheck never has that problem precisely because it never narrows
+    // itself in the first place. Width is stable for the same reason DeviceCheck's
+    // is: driven by the fixed-width section it's in, not by content, so this
+    // doesn't reintroduce the earlier per-step resize either. Inner content
+    // (header text, the step card, the video) still caps and centers at its
+    // own narrower width via the flex column below.
+    <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-card)', padding: 'clamp(24px, 4vw, 36px)', display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'center', maxWidth: 520 }}>
         <strong style={{ fontSize: 'var(--text-xl)' }}>Before You Start: How This Works</strong>
         <p style={{ margin: '8px 0 0', fontSize: 'var(--text-sm)', opacity: 0.7 }}>
           {videoAvailable
-            ? 'Watch the short walkthrough below, or read through the points underneath. Either way, it covers everything you need to know so nothing catches you off guard mid-question.'
-            : 'Read through the points below. It covers everything you need to know so nothing catches you off guard mid-question.'}
+            ? 'Watch the short walkthrough below, or step through the points underneath. Either way, it covers everything you need to know so nothing catches you off guard mid-question.'
+            : 'Step through the points below. It covers everything you need to know so nothing catches you off guard mid-question.'}
         </p>
       </div>
       {videoAvailable && (
@@ -76,20 +172,54 @@ function InterviewInstructions({ onContinue }) {
           <source src="/videos/interview-instructions.mp4" type="video/mp4" />
         </video>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: 560 }}>
-        {INTERVIEW_INSTRUCTIONS.map((item) => (
-          <div key={item.title} style={{ display: 'flex', gap: 16, alignItems: 'flex-start', textAlign: 'left' }}>
-            <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--pink-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              {INFO_ICONS[item.icon]}
-            </span>
-            <div>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700 }}>{item.title}</div>
-              <div style={{ fontSize: 'var(--text-sm)', opacity: 0.7, marginTop: 2 }}>{item.body}</div>
-            </div>
-          </div>
+
+      {/* Sized to each step's actual rendered content (icon + up to a
+          2-line title + up to a 2-line body), not padded out to fit
+          CountdownPreview's fully-expanded dark countdown box — that only
+          ever appears after a deliberate click on the timing step, so it's
+          fine for it to grow the card a little further right then (its own
+          small, self-contained, obviously-caused-by-me resize), rather than
+          reserving that space unused on every single step up front. No more
+          separate "STEP X OF 5" row either — that was its own 24px-gapped
+          section for something the dots below already show; folded away
+          instead of padding the card out further for redundant text. */}
+      <div
+        key={step}
+        className="fade-in-up"
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          minHeight: step === 1 ? 220 : 150, transition: 'min-height 0.3s ease',
+        }}
+      >
+        <InstructionStepCard item={current} isTimingStep={step === 1} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        {INTERVIEW_INSTRUCTIONS.map((_, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => goTo(i)}
+            disabled={i > maxReached}
+            aria-label={`Step ${i + 1}`}
+            className="btn-animate"
+            style={{
+              width: i === step ? 22 : 8, height: 8, borderRadius: 999, border: 'none', padding: 0,
+              background: i <= step ? 'var(--action-primary-bg)' : 'var(--border-hairline)',
+              cursor: i <= maxReached ? 'pointer' : 'default', transition: 'width 0.25s ease, background 0.25s ease',
+            }}
+          />
         ))}
       </div>
-      <Button variant="strong" size="md" onClick={onContinue} style={{ width: 'auto', minWidth: 260 }}>I Understand, Continue</Button>
+
+      <div style={{ display: 'flex', gap: 12 }}>
+        {step > 0 && <Button variant="ghost" size="md" onClick={() => setStep((s) => s - 1)} style={{ width: 'auto', minWidth: 140 }}>Back</Button>}
+        {step < lastStep ? (
+          <Button variant="strong" size="md" onClick={handleNext} style={{ width: 'auto', minWidth: 200 }}>Next</Button>
+        ) : (
+          <Button variant="strong" size="md" onClick={onContinue} style={{ width: 'auto', minWidth: 260 }}>I Understand, Continue</Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -647,13 +777,29 @@ function IntroRecorder({ applicantId, applicationId, stream, onSubmitted }) {
 // appearing already relocated.
 function AnswerRecorder({ response, index, total, applicantId, applicationId, jobCategory, stream, flipFromRect, taglish, onSubmitted, onAutoAdvance }) {
   const [mode, setMode] = useState(response.video_path ? 'submitted' : 'locked');
-  const [revealed, setRevealed] = useState(!!response.video_path);
+  // Also revealed on reload if first_shown_at is already set — that's
+  // stamped in the same write as the first attempt_count (see recordAttempt
+  // in lib/interview.js), so it means this question was already started
+  // before, even if the tab was closed before anything was recorded.
+  // Re-hiding it on reload would desync from the time budget below, which
+  // keeps counting down from the persisted first_shown_at regardless.
+  const [revealed, setRevealed] = useState(!!response.video_path || !!response.first_shown_at);
   const [recordedBlob, setRecordedBlob] = useState(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
   const [recordSecondsLeft, setRecordSecondsLeft] = useState(RECORD_SECONDS);
   const [attemptCount, setAttemptCount] = useState(response.attempt_count || 0);
+  const [firstShownAt, setFirstShownAt] = useState(response.first_shown_at ? new Date(response.first_shown_at) : null);
+  const [budgetSecondsLeft, setBudgetSecondsLeft] = useState(
+    response.first_shown_at
+      ? Math.max(0, QUESTION_TIME_BUDGET_SECONDS - Math.floor((Date.now() - new Date(response.first_shown_at).getTime()) / 1000))
+      : QUESTION_TIME_BUDGET_SECONDS
+  );
+  // True once the budget has hit 0 with nothing ever submitted for this
+  // question — distinct from atAttemptLimit (which means all 3 *attempts*
+  // were used), this means time simply ran out, possibly on attempt 1.
+  const [budgetExpired, setBudgetExpired] = useState(false);
   // True only for the brief window while the attempt count is being
   // persisted server-side, before the countdown/recording UI appears at
   // all — see the comment on beginCountdown for why this has to happen
@@ -939,6 +1085,10 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
     }
     setAttemptCount(nextAttempt);
     setRevealed(true);
+    if (nextAttempt === 1) {
+      setFirstShownAt(new Date());
+      setBudgetSecondsLeft(QUESTION_TIME_BUDGET_SECONDS);
+    }
     setReadySecondsLeft(READY_SECONDS);
     setMode('countdown');
   };
@@ -957,7 +1107,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
       setError('Camera/microphone access was lost. Please refresh and try again.');
       return;
     }
-    if (attemptCount >= MAX_ATTEMPTS) return;
+    if (attemptCount >= MAX_ATTEMPTS || budgetExpired) return;
     if (attemptCount === MAX_ATTEMPTS - 1) {
       setShowLastAttemptConfirm(true);
       return;
@@ -967,7 +1117,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
 
   // Re-records this same question — no swap to a different one anymore.
   const reRecord = () => {
-    if (attemptCount >= MAX_ATTEMPTS) return;
+    if (attemptCount >= MAX_ATTEMPTS || budgetExpired) return;
     setError('');
     setRecordedBlob(null);
     setLiveTranscript('');
@@ -1017,13 +1167,37 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   // button available instead (still rendered below), so a bad connection
   // doesn't strand the take with no way to retry.
   useEffect(() => {
-    if (mode !== 'preview' || attemptCount < MAX_ATTEMPTS || !recordedBlob) return;
+    if (mode !== 'preview' || !recordedBlob || (attemptCount < MAX_ATTEMPTS && budgetSecondsLeft > 0)) return;
     const t = setTimeout(() => {
       submit().then((ok) => { if (ok) onAutoAdvance?.(); });
     }, 2500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, attemptCount, recordedBlob]);
+  }, [mode, attemptCount, recordedBlob, budgetSecondsLeft]);
+
+  // Ticks the shared time budget down once per second while this question is
+  // revealed and not yet submitted. Persisted firstShownAt (not a fresh
+  // local clock) means this picks up correctly even after a page reload —
+  // the budget doesn't pause just because the tab was closed. Hitting 0
+  // with an unsubmitted take sitting in preview is handled by the
+  // auto-submit effect above; hitting 0 with nothing recorded at all locks
+  // the question via budgetExpired below instead.
+  useEffect(() => {
+    if (!firstShownAt || mode === 'submitted') return;
+    const tick = () => {
+      const left = Math.max(0, QUESTION_TIME_BUDGET_SECONDS - Math.floor((Date.now() - firstShownAt.getTime()) / 1000));
+      setBudgetSecondsLeft(left);
+      // Only locks the question while genuinely idle — an in-flight
+      // countdown/recording is left to finish naturally (they're short:
+      // READY_SECONDS/RECORD_SECONDS), and a preview with a take sitting in
+      // it goes through the auto-submit effect above instead of being
+      // locked out from under them.
+      if (left === 0 && mode === 'locked') setBudgetExpired(true);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [firstShownAt, mode]);
 
   const resumeRecovery = () => {
     const blob = new Blob(recovery.chunks, { type: 'video/webm' });
@@ -1176,8 +1350,13 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
             )
           ) : (
             <>
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Attempt {Math.min(attemptCount, MAX_ATTEMPTS)} of {MAX_ATTEMPTS}</span>
+                {mode !== 'submitted' && (
+                  <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: budgetSecondsLeft <= 30 ? 'var(--red-700)' : 'inherit', opacity: budgetSecondsLeft <= 30 ? 1 : 0.6 }}>
+                    {budgetSecondsLeft > 0 ? `Time left to answer: ${formatTime(budgetSecondsLeft)}` : 'Time expired'}
+                  </span>
+                )}
               </div>
               {/* Taglish sits in parentheses right under the English text
                   instead of behind a "Translate" toggle — that toggle used
@@ -1199,13 +1378,31 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
               )}
               {error && <div style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', marginBottom: 10 }}>{error}</div>}
 
+              {/* Only reachable by reloading after revealing this question's
+                  first attempt but closing the tab before anything actually
+                  recorded (revealed stays true across a reload once
+                  first_shown_at exists — see the revealed useState above —
+                  but mode itself re-initializes to 'locked' since nothing
+                  was ever submitted). */}
+              {mode === 'locked' && (
+                budgetExpired ? (
+                  <p style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)' }}>
+                    Time expired for this question. Contact HR for help.
+                  </p>
+                ) : (
+                  <Button variant="strong" size="sm" onClick={beginCountdown} disabled={!stream || startingAttempt}>
+                    {startingAttempt ? 'Starting…' : 'Continue'}
+                  </Button>
+                )
+              )}
+
               {mode === 'submitted' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 'var(--text-sm)', color: 'var(--red-700)', fontWeight: 700 }}>✓ Submitted</span>
                   {atAttemptLimit ? (
                     <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>You've used all {MAX_ATTEMPTS} attempts for this question.</span>
                   ) : (
-                    <Button variant="outline" size="sm" onClick={reRecord}>Re-record ({attemptsLeft} left)</Button>
+                    <Button variant="outline" size="sm" onClick={reRecord} disabled={budgetExpired}>Re-record ({attemptsLeft} left)</Button>
                   )}
                 </div>
               )}
@@ -1213,9 +1410,13 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
               {mode === 'preview' && recordedBlob && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <Button variant="strong" size="sm" onClick={submit} disabled={uploading}>{uploading ? 'Submitting…' : 'Submit Answer'}</Button>
-                  {atAttemptLimit ? (
+                  {atAttemptLimit || budgetSecondsLeft <= 0 ? (
                     <span style={{ fontSize: 'var(--text-xs)', opacity: 0.65 }}>
-                      {uploading ? 'Submitting your final attempt…' : `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}), submitting automatically and moving on…`}
+                      {uploading
+                        ? 'Submitting your final attempt…'
+                        : atAttemptLimit
+                          ? `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}), submitting automatically and moving on…`
+                          : 'Time expired for this question — submitting automatically and moving on…'}
                     </span>
                   ) : (
                     <Button variant="outline" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>
