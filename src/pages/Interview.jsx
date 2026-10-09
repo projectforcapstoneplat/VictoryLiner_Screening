@@ -1328,11 +1328,19 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
                   <div style={{ fontSize: 'var(--text-xs)', opacity: 0.55, marginTop: 3 }}>
                     Auto-generated, for your reference only, not what HR sees
                   </div>
-                  {liveTranscript ? (
-                    <p style={{ margin: '10px 0 0', fontSize: 'var(--text-md)', lineHeight: 1.6, fontStyle: 'italic' }}>&ldquo;{liveTranscript}&rdquo;</p>
-                  ) : (
-                    <p style={{ margin: '10px 0 0', fontSize: 'var(--text-md)', lineHeight: 1.6, opacity: 0.6 }}>{transcriptFallbackMessage(transcriptErrorCode)}</p>
-                  )}
+                  {/* Capped + scrollable, not left to grow with however long
+                      the answer ran — an uncapped transcript could stretch
+                      this column far past the question/controls column next
+                      to it (they're independently sized, not height-matched),
+                      leaving a lopsided layout with a big empty gap on the
+                      other side for anything but a very short answer. */}
+                  <div style={{ maxHeight: 180, overflowY: 'auto', marginTop: 10 }}>
+                    {liveTranscript ? (
+                      <p style={{ margin: 0, fontSize: 'var(--text-md)', lineHeight: 1.6, fontStyle: 'italic' }}>&ldquo;{liveTranscript}&rdquo;</p>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: 'var(--text-md)', lineHeight: 1.6, opacity: 0.6 }}>{transcriptFallbackMessage(transcriptErrorCode)}</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
