@@ -1,0 +1,12 @@
+-- Victory Liner Careers — anti-stalling measure for the video interview.
+-- Each question already allows up to 3 re-record attempts (MAX_ATTEMPTS in
+-- Interview.jsx), but nothing bounded how long an applicant could sit on a
+-- question between attempts — they could see it, leave the tab open
+-- indefinitely to look up an answer elsewhere, then come back and record a
+-- polished take. first_shown_at is stamped once, the moment the applicant
+-- first reveals the question (their first attempt), and the client enforces
+-- a shared time budget across all 3 attempts combined from that moment —
+-- see QUESTION_TIME_BUDGET_SECONDS in Interview.jsx. Persisting this
+-- server-side (not just in React state) means closing the tab and coming
+-- back doesn't reset the clock.
+alter table public.interview_responses add column if not exists first_shown_at timestamptz;

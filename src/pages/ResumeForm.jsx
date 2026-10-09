@@ -18,7 +18,7 @@ import {
   LICENSE_RESTRICTION_CODES, isPhoneValid, SECTION_STYLE, GRID_2COL, SECTION_ICONS,
   SectionHeader, RepeatableSection, TagInput, ResumeField, ResumeSelect, autoResizeTextarea,
 } from '../components/forms/ResumeFields/ResumeFields.jsx';
-import { getMyResume, upsertMyResume } from '../lib/applicantResume.js';
+import { getMyResume, upsertMyResume, syncSubmittedApplicationsWithResume } from '../lib/applicantResume.js';
 import { clearMyMatches } from '../lib/resumeMatches.js';
 import { uploadAndParseResume } from '../lib/resumeUpload.js';
 
@@ -731,6 +731,13 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     // matched, it recomputes fresh against what was just changed instead of
     // showing stale scores.
     await clearMyMatches(profile.id);
+    // Same staleness problem, but for applications already submitted
+    // elsewhere — without this, HR keeps reviewing the resume data exactly
+    // as it was at apply time, even after this save. Only touches
+    // 'submitted'/'interview_stage' applications (see the function's own
+    // comment); already-decided ones stay frozen as the honest record of
+    // what was actually reviewed.
+    await syncSubmittedApplicationsWithResume(profile.id);
     // App.jsx's own hasResume only refetches when `profile` itself changes,
     // which this save doesn't trigger — without this, its landing-page gate
     // would still think no resume exists and bounce back here the next time

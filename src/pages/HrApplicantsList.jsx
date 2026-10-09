@@ -68,6 +68,20 @@ const DECISION_META = {
   declined: { label: 'Declined', bg: 'var(--pink-100)', fg: 'var(--red-700)' },
 };
 
+// 'interview_stage' alone doesn't distinguish "invited but hasn't recorded
+// the interview yet" from "recorded, AI-scored, and now just waiting on
+// HR's Advance/Decline call" — both share the one applications.status value,
+// there's no separate DB status for it (see matchesStage's 'pending' stage
+// below, which already treats "interview_stage + interviewCompleted" as its
+// own case). Swapping the label once the interview is actually done makes
+// that distinction visible without changing the underlying status.
+function statusMetaFor(s) {
+  if (s.status === 'interview_stage' && s.interviewCompleted) {
+    return { label: 'Awaiting Decision', bg: '#fff4e0', fg: '#c98500' };
+  }
+  return DECISION_META[s.status] || DECISION_META.submitted;
+}
+
 const SELECT_STYLE = {
   fontSize: 'var(--text-xs)', fontFamily: 'var(--font-ui)', padding: '7px 28px 7px 10px', borderRadius: 8,
   background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
@@ -662,7 +676,7 @@ function ComparisonPanel({ candidates, onRemove, onClear }) {
           </tr>
           <tr>
             <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Status</td>
-            {candidates.map((c) => <td key={c.id} style={COMPARE_ROW_STYLE}>{(DECISION_META[c.status] || DECISION_META.submitted).label}</td>)}
+            {candidates.map((c) => <td key={c.id} style={COMPARE_ROW_STYLE}>{statusMetaFor(c).label}</td>)}
           </tr>
           <tr>
             <td style={{ ...COMPARE_ROW_STYLE, opacity: 0.6 }}>Years Experience</td>
@@ -1110,7 +1124,17 @@ function SchedulePanel({ application: a, onSave, saving }) {
           <Button variant="outline" size="sm" onClick={() => setEditing(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
             {CALENDAR_ICON} Reschedule
           </Button>
-          <Button variant="ghost" size="sm" onClick={handleSendTestReminder} disabled={testReminderStatus === 'sending'}>
+          {/* Plain "ghost" (thin 200-weight text, near-invisible shadow) read
+              as washed-out next to Reschedule's bold red outline pill right
+              beside it — same reasoning Button.jsx's own "outline" variant
+              comment gives for why ghost alone isn't enough next to a bold
+              sibling. Borrows outline's bold weight and visible border, but
+              in neutral gray rather than red since this isn't an
+              interview-schedule-changing action. */}
+          <Button
+            variant="ghost" size="sm" onClick={handleSendTestReminder} disabled={testReminderStatus === 'sending'}
+            style={{ fontWeight: 700, boxShadow: 'inset 0 0 0 1.5px var(--gray-400)', color: 'var(--gray-600)' }}
+          >
             {testReminderStatus === 'sending' ? 'Sending…' : 'Send Test Reminder'}
           </Button>
           {testReminderStatus === 'sent' && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--action-primary-bg)', fontWeight: 700 }}>Sent to {a.email}</span>}
@@ -1984,7 +2008,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         a.current_location || '',
         s.job?.title || '',
         new Date(s.createdAt).toLocaleDateString(),
-        DECISION_META[s.status]?.label || 'Awaiting Review',
+        statusMetaFor(s).label,
         s.resumeScore ?? '',
         s.interviewScore ?? '',
         (a.skills || s.skills || []).join('; '),
@@ -2140,7 +2164,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   const compareCandidates = [...compareIds].map((id) => {
     const s = scored?.find((row) => row.applicationId === id);
     if (!s) return null;
-    return { id, name: s.name, status: s.status, resumeScore: s.resumeScore, interviewScore: s.interviewScore, skills: s.skills, application: fullApplications[id] };
+    return { id, name: s.name, status: s.status, interviewCompleted: s.interviewCompleted, resumeScore: s.resumeScore, interviewScore: s.interviewScore, skills: s.skills, application: fullApplications[id] };
   }).filter(Boolean);
 
   const scoreLabel = SCORE_TYPE_OPTIONS.find((o) => o.value === scoreType)?.label || 'Score';
@@ -2408,7 +2432,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                     </thead>
                     <tbody>
                       {filtered.map((s) => {
-                        const status = DECISION_META[s.status] || DECISION_META.submitted;
+                        const status = statusMetaFor(s);
                         const isExpanded = expandedId === s.applicationId;
                         const a = fullApplications[s.applicationId];
                         const decision = decisionLog[s.applicationId];
@@ -2589,8 +2613,15 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                                   ? 'Made this call by mistake? Reopening cancels their scheduled interview and resets them to “Awaiting Review” for reconsideration from scratch.'
                                                   : 'Made this call by mistake? Reopening resets them to “Awaiting Review” for reconsideration from scratch.'}
                                               </p>
+                                              {/* "strong" (solid fill), not "outline" — Reopen undoes an
+                                                  already-made Advanced/Declined call and, if an interview is on
+                                                  the calendar, cancels it too. Sitting in an outline pill made it
+                                                  read as just another routine action like Reschedule right above
+                                                  it; a solid-fill button signals this one is deliberate, not a
+                                                  casual click, same reasoning ConfirmModal already guards it with
+                                                  a confirmation step. */}
                                               <Button
-                                                variant="outline" size="sm"
+                                                variant="strong" size="sm"
                                                 onClick={() => setPendingReopen({
                                                   applicationId: s.applicationId,
                                                   name: a.full_name,

@@ -3,23 +3,18 @@
 // pulled out so the two never drift into two slightly different-looking
 // implementations of the same chart.
 
-// A three-way proportional split (positive/neutral/negative) as a donut —
-// the right chart shape for this data specifically because these three
-// values are parts of one whole (sum to 100%), unlike the independent
-// magnitudes HorizontalBarChart/VerticalDistributionChart compare side by
-// side. Used to be a segmented bar (still just one strip, easy to misread
-// as a progress/loading bar rather than a proportion) plus a stat row below
-// it; the ring keeps the same "share of the whole" read a bar gave, with
-// the total sitting right in the center, and the stat list next to it
-// (not below) keeps the card from needing much extra vertical room.
-export function SentimentBar({ sentiment }) {
-  const { positive, neutral, negative, total } = sentiment;
-  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No interview responses evaluated yet.</p>;
-  const segments = [
-    { key: 'positive', label: 'Positive', value: positive, color: '#0ca30c' },
-    { key: 'neutral', label: 'Neutral', value: neutral, color: 'var(--gray-500)' },
-    { key: 'negative', label: 'Negative', value: negative, color: 'var(--red-700)' },
-  ];
+// A proportional split rendered as a donut — the right chart shape whenever
+// a small set of values are parts of one whole (sum to 100%), unlike the
+// independent magnitudes HorizontalBarChart/VerticalDistributionChart
+// compare side by side. The ring keeps a "share of the whole" read, with
+// the total sitting right in the center, and the stat list next to it (not
+// below) keeps the card from needing much extra vertical room on its own —
+// centered vertically by the caller (via flex) so it also fills gracefully
+// when stretched taller by a tall sibling card in the same grid row,
+// instead of clustering at the top and leaving dead space below.
+export function ShareDonut({ segments, totalNoun = 'Item', emptyMessage }) {
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>{emptyMessage}</p>;
   const size = 128;
   const stroke = 18;
   const radius = (size - stroke) / 2;
@@ -46,7 +41,7 @@ export function SentimentBar({ sentiment }) {
         </svg>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'var(--text-2xl)' }}>{total}</span>
-          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Response{total === 1 ? '' : 's'}</span>
+          <span style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>{totalNoun}{total === 1 ? '' : 's'}</span>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 150 }}>
@@ -64,6 +59,25 @@ export function SentimentBar({ sentiment }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// Thin sentiment-specific wrapper around ShareDonut — kept as its own export
+// since both HR dashboards already call it with this exact `sentiment` shape
+// ({positive, neutral, negative, total}), so neither call site needs to know
+// about the more generic segments/totalLabel API underneath.
+export function SentimentBar({ sentiment }) {
+  const { positive, neutral, negative } = sentiment;
+  return (
+    <ShareDonut
+      segments={[
+        { key: 'positive', label: 'Positive', value: positive, color: '#0ca30c' },
+        { key: 'neutral', label: 'Neutral', value: neutral, color: 'var(--gray-500)' },
+        { key: 'negative', label: 'Negative', value: negative, color: 'var(--red-700)' },
+      ]}
+      totalNoun="Response"
+      emptyMessage="No interview responses evaluated yet."
+    />
   );
 }
 
@@ -131,3 +145,4 @@ export function HorizontalBarChart({ rows, emptyMessage }) {
     </div>
   );
 }
+

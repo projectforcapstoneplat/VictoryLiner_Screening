@@ -107,10 +107,19 @@ export async function getInterviewCompletionMap(applicationIds) {
 // be reset just by refreshing the page (see MAX_ATTEMPTS in Interview.jsx).
 // Best-effort: a failed update never blocks the applicant from recording,
 // it just means the count may under-report if they're offline right then.
+// On the very first attempt, also stamps first_shown_at — the anchor for
+// the shared time budget across all 3 attempts (see
+// QUESTION_TIME_BUDGET_SECONDS in Interview.jsx). Stamped here rather than
+// at question-assignment time (ensureAssignedResponses, above) because that
+// runs for all 3 questions at once up front, before the applicant has
+// actually seen any of them — the budget should only start ticking once
+// they've actually revealed this specific question.
 export async function recordAttempt(applicationId, questionId, attemptCount) {
+  const update = { attempt_count: attemptCount };
+  if (attemptCount === 1) update.first_shown_at = new Date().toISOString();
   const { error } = await supabase
     .from('interview_responses')
-    .update({ attempt_count: attemptCount })
+    .update(update)
     .eq('application_id', applicationId)
     .eq('question_id', questionId);
   return { error };

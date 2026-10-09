@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Footer } from '../components/layout/Footer/Footer.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
+import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
 import { CategoryIcon } from '../components/icons/CategoryIcon.jsx';
 import { deadlineInfo } from '../lib/deadline.js';
 import { quickApply } from '../lib/quickApply.js';
@@ -85,7 +86,7 @@ function SectionCard({ icon, title, body, delay }) {
 // (see .mobile-apply-bar in styles.css) so the two surfaces can never drift
 // out of sync on what state shows what — `compact` just drops the
 // explanatory copy the bottom bar has no room for, keeping only the button.
-function ApplyAction({ canApply, profile, matchState, applying, applyError, existingApplication, onApply, onSignIn, onBackHome, onTrackApplication, compact }) {
+function ApplyAction({ canApply, profile, matchState, applying, existingApplication, onApply, onSignIn, onBackHome, onTrackApplication, compact }) {
   // Checked before everything else, including the deadline — someone who
   // already has an application on file doesn't need "Applications Closed"
   // (which reads like a rejection of a new attempt that was never being
@@ -127,7 +128,6 @@ function ApplyAction({ canApply, profile, matchState, applying, applyError, exis
     return (
       <>
         <Button variant="primary" size="md" disabled={applying} onClick={onApply}>{applying ? 'Applying…' : 'Apply Now'}</Button>
-        {!compact && applyError && <p style={{ color: 'var(--red-700)', fontSize: 'var(--text-xs)', margin: 0 }}>{applyError}</p>}
       </>
     );
   }
@@ -252,6 +252,20 @@ export function JobDetails({ job, nav, profile, backTo }) {
 
   return (
     <div style={{ background: 'var(--surface-page)', minHeight: '100vh', fontFamily: 'var(--font-ui)' }}>
+      {/* Was a small red line of text tucked under the Apply button — easy to
+          miss, and cramped for what's actually a dead-end ("you can't apply
+          here right now") that deserves its own moment, not a footnote.
+          Shared by both ApplyAction instances (desktop sidebar + mobile
+          sticky bar) since they both write to the same applyError state. */}
+      <ConfirmModal
+        open={!!applyError}
+        title="Can't Apply Right Now"
+        message={applyError}
+        confirmLabel="Go to My Applications"
+        cancelLabel="Close"
+        onConfirm={() => { setApplyError(''); nav('my-applications'); }}
+        onCancel={() => setApplyError('')}
+      />
       <div style={{ padding: '30px 60px 0' }} className="page-header-wrap">
         <Header
           nav={nav}
@@ -340,7 +354,7 @@ export function JobDetails({ job, nav, profile, backTo }) {
                 )}
               </div>
               <ApplyAction
-                canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
+                canApply={canApply} profile={profile} matchState={matchState} applying={applying}
                 existingApplication={existingApplication}
                 onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={handleBack} onTrackApplication={() => nav('my-applications')}
               />
@@ -357,7 +371,7 @@ export function JobDetails({ job, nav, profile, backTo }) {
           Hidden on desktop via .mobile-apply-bar in styles.css. */}
       <div className="mobile-apply-bar">
         <ApplyAction
-          canApply={canApply} profile={profile} matchState={matchState} applying={applying} applyError={applyError}
+          canApply={canApply} profile={profile} matchState={matchState} applying={applying}
           existingApplication={existingApplication}
           onApply={handleApply} onSignIn={() => nav('signin', j)} onBackHome={handleBack} onTrackApplication={() => nav('my-applications')}
           compact

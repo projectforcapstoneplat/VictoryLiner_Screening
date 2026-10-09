@@ -21,3 +21,21 @@ export async function upsertMyResume(applicantId, resume) {
     .single();
   return { data, error };
 }
+
+// Refreshes any of this applicant's still-undecided applications
+// ('submitted'/'interview_stage') to match the resume as it stands right
+// now — without this, HR keeps reviewing whatever was true the moment the
+// applicant quick-applied (applications stores its own snapshot of resume
+// data, not a live reference), even after a later edit. Only called after a
+// real, completed save (ResumeForm.jsx's final "Save Changes"), not the
+// in-progress autosaves between wizard steps — syncing a half-finished edit
+// into a live application record would do more harm than staying stale.
+// Applicants have no UPDATE policy on applications (HR owns that table), so
+// this goes through the same SECURITY DEFINER RPC pattern as
+// uploadIntroVideo's set_intro_video_path (see migration
+// 0044_sync_submitted_applications_with_resume.sql) rather than a direct
+// client-side update.
+export async function syncSubmittedApplicationsWithResume(applicantId) {
+  const { error } = await supabase.rpc('sync_submitted_applications_with_resume', { p_applicant_id: applicantId });
+  return { error };
+}

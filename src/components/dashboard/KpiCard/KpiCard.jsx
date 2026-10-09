@@ -8,6 +8,7 @@ const ACCENTS = {
   amber: { bg: '#fdf0da', fg: '#c98500' },
   green: { bg: '#e3f6e6', fg: '#0ca30c' },
   violet: { bg: '#ece7fa', fg: '#6d4fc7' },
+  slate: { bg: 'var(--surface-page-alt)', fg: 'var(--gray-600)' },
 };
 
 function TrendArrow({ direction }) {

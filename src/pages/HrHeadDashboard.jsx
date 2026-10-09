@@ -17,9 +17,9 @@ const FILTER_SELECT_STYLE = {
   background: 'var(--surface-field)', border: 'none', color: 'var(--text-primary)',
   ...DROPDOWN_ARROW_STYLE, backgroundPosition: 'right 8px center',
 };
-import { getHeadOverview } from '../lib/reports.js';
+import { getHeadOverview, getUnappliedApplicants } from '../lib/reports.js';
 import { getScreeningSettings, updateMinResumeMatchPercent, updateInterviewQuestionCount } from '../lib/screeningSettings.js';
-import { SentimentBar, HorizontalBarChart, VerticalDistributionChart } from '../components/dashboard/charts/DashboardCharts.jsx';
+import { SentimentBar, ShareDonut, HorizontalBarChart, VerticalDistributionChart } from '../components/dashboard/charts/DashboardCharts.jsx';
 import { buildCsv, downloadCsv } from '../lib/csvExport.js';
 import { HiringProgressCard } from './HrPersonnelDashboard.jsx';
 
@@ -29,9 +29,34 @@ const KPI_ICONS = {
   briefcase: <svg {...ICON_PROPS}><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>,
   doc: <svg {...ICON_PROPS}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" /></svg>,
   video: <svg {...ICON_PROPS}><rect x="2" y="6" width="14" height="12" rx="2" /><path d="M16 10l6-3v10l-6-3" /></svg>,
+  // A person inside a dashed ring — registered, but not yet a real
+  // applicant in any pipeline sense (distinct from the solid two-person
+  // "users" icon above, which is every actual applicant).
+  ghost: <svg {...ICON_PROPS}><circle cx="12" cy="8" r="4" /><path d="M4 20a8 8 0 0 1 16 0" /><circle cx="12" cy="13" r="10" strokeDasharray="2 3" /></svg>,
 };
 
 const RANK_ACCENT = ['#d4af37', '#9aa0a6', '#b56a3f']; // gold / silver / bronze — 4th+ stays plain
+
+// Validated CVD-safe categorical palette (fixed order, never cycled) — job
+// categories are nominal identity, not magnitude, so each gets its own hue
+// rather than one hue shaded by count (that would double-encode what slice
+// size already shows, and fails the categorical color checks by design).
+// Capped at the first 5 slots on purpose: past ~5-6 series a donut's slices
+// blur together, so anything past the top 5 categories folds into one
+// neutral "Other" slice instead of forcing a 6th+ hue onto the wheel.
+const CATEGORY_DONUT_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4'];
+
+function buildCategoryDonutSegments(categoryBreakdown) {
+  const sorted = [...categoryBreakdown].sort((a, b) => b.count - a.count);
+  const top = sorted.slice(0, CATEGORY_DONUT_PALETTE.length);
+  const rest = sorted.slice(CATEGORY_DONUT_PALETTE.length);
+  const segments = top.map((c, i) => ({ key: c.category, label: c.category, value: c.count, color: CATEGORY_DONUT_PALETTE[i] }));
+  const otherTotal = rest.reduce((sum, c) => sum + c.count, 0);
+  if (otherTotal > 0) {
+    segments.push({ key: 'other', label: `Other (${rest.length})`, value: otherTotal, color: 'var(--gray-500)' });
+  }
+  return segments;
+}
 
 const EXPORT_ICON = <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>;
 
@@ -255,31 +280,44 @@ function RecentInterviewRow({ candidate, isFirst, onView }) {
   );
 }
 
-// Two-row comparison of average days-to-decision for advanced vs. declined
-// outcomes. Kept separate from HorizontalBarChart because its values are
-// fractional days rather than whole counts, and either side can be null
-// (no decisions of that kind yet) — a state HorizontalBarChart's
-// count-based empty check doesn't represent correctly.
-function TimeToHireByOutcome({ data }) {
-  const rows = [
-    { label: 'Advanced', value: data.advanced, color: 'var(--status-positive, #2e7d32)' },
-    { label: 'Declined', value: data.declined, color: 'var(--status-negative, #c62828)' },
-  ];
-  if (rows.every((r) => r.value == null)) {
-    return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>No applications with a final decision yet.</p>;
-  }
-  const max = Math.max(...rows.map((r) => r.value || 0), 0.1);
+// Needs its own rendering rather than reusing VerticalDistributionChart
+// (used by Resume/Interview Score Distribution) because this data is much
+// sparser — applications tend to cluster in just one or two of these 5
+// buckets, leaving several at 0. VerticalDistributionChart's near-invisible
+// 2px/dimmed stub for a zero bucket reads fine when it's the exception, but
+// with several zero buckets here it looked like disconnected floating
+// debris with no shared ground to read from. A visible baseline line fixes
+// that: a 0-count bucket now legibly reads as "the bar that didn't reach
+// the line" instead of a stray mark, and fixed-width (rather than flex:1)
+// columns keep the bars from sprawling edge-to-edge with huge dead gaps
+// between them.
+function TimeToHireDistributionChart({ rows, emptyMessage }) {
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+  if (total === 0) return <p style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>{emptyMessage}</p>;
+  const max = Math.max(...rows.map((r) => r.count), 1);
+  const chartHeight = 170;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {rows.map((r) => (
-        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 'var(--text-xs)', width: 96, flexShrink: 0, opacity: 0.7 }}>{r.label}</span>
-          <div style={{ flex: 1, height: 10, borderRadius: 999, background: 'var(--surface-page-alt)', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${r.value != null ? (r.value / max) * 100 : 0}%`, borderRadius: 999, background: r.color, transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)' }} />
-          </div>
-          <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, width: 50, textAlign: 'right', flexShrink: 0 }}>{r.value != null ? `${r.value}d` : '—'}</span>
-        </div>
-      ))}
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 28, height: chartHeight + 32, borderBottom: '1px solid var(--border-hairline)' }}>
+        {rows.map((r) => {
+          const barHeight = r.count > 0 ? Math.max((r.count / max) * chartHeight, 8) : 0;
+          return (
+            <div
+              key={r.label}
+              title={`${r.label}: ${r.count} application${r.count === 1 ? '' : 's'}`}
+              style={{ width: 64, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}
+            >
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700, marginBottom: 8, opacity: r.count > 0 ? 1 : 0.4 }}>{r.count}</span>
+              <div style={{ width: '100%', height: barHeight, background: 'var(--action-primary-bg)', borderRadius: '8px 8px 0 0', transition: 'height 0.6s cubic-bezier(0.16, 1, 0.3, 1)' }} />
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 28, marginTop: 12 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ width: 64, textAlign: 'center', fontSize: 'var(--text-xs)', opacity: 0.6, lineHeight: 1.2 }}>{r.label}</div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -600,6 +638,19 @@ export function HrHeadDashboard({ nav, profile }) {
   const [lastNDays, setLastNDays] = useState(30);
   const [reportCategory, setReportCategory] = useState('all');
   const [showReport, setShowReport] = useState(false);
+  // Registered applicant accounts with zero applications on file — invisible
+  // everywhere else in this report, since every other number here is built
+  // off the applications table. Not scoped to the date-range/category
+  // filters above (registering isn't tied to a job or a decision), so this
+  // is its own one-time fetch rather than folded into getHeadOverview's
+  // params-dependent effect below.
+  const [unappliedCount, setUnappliedCount] = useState(null);
+
+  useEffect(() => {
+    getUnappliedApplicants().then(({ data }) => {
+      if (data) setUnappliedCount(data.length);
+    });
+  }, []);
 
   const { from, to } = useMemo(() => {
     if (rangePreset === 'custom') return { from: customFrom || null, to: customTo || null };
@@ -699,11 +750,17 @@ export function HrHeadDashboard({ nav, profile }) {
 
         {report && (
           <>
-            <div className="hr-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+            <div className="hr-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
               <KpiCard icon={KPI_ICONS.users} accent="red" label="Total Applicants" value={report.applicantCount} trend={report.trends.applicants} />
               <KpiCard icon={KPI_ICONS.briefcase} accent="amber" label={(from || to) ? 'Published Postings (current)' : 'Published Postings'} value={report.jobStats.published} trend={null} />
               <KpiCard icon={KPI_ICONS.doc} accent="green" label="Resumes Screened" value={report.scores.resumeEvaluatedCount} trend={report.trends.resumeScreened} />
               <KpiCard icon={KPI_ICONS.video} accent="violet" label="Interviews Completed" value={report.scores.interviewCompletedCount} trend={report.trends.interviewsCompleted} />
+              {/* Registered accounts with zero applications — previously
+                  invisible in every report number on this page, since all
+                  four tiles above (and everything else here) are built off
+                  the applications table. Not date/category-filtered, same
+                  reasoning as its own fetch effect above. */}
+              <KpiCard icon={KPI_ICONS.ghost} accent="slate" label="Registered, Never Applied" value={unappliedCount ?? 0} trend={null} />
             </div>
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
@@ -733,21 +790,16 @@ export function HrHeadDashboard({ nav, profile }) {
                   />
                 </div>
               </SectionCard>
-              <SectionCard title="Average Time-to-Hire" subtitle="Days from application to HR's final call" delay={0.02}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-6xl)', color: 'var(--action-primary-bg)' }}>
-                    {report.avgTimeToHire != null ? report.avgTimeToHire : '—'}
-                  </span>
-                  {report.avgTimeToHire != null && <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6 }}>days</span>}
-                </div>
-                <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)' }}>
-                  {report.avgTimeToHire != null
-                    ? `Based on ${report.decisionOutcomes.advanced + report.decisionOutcomes.declined} application${report.decisionOutcomes.advanced + report.decisionOutcomes.declined === 1 ? '' : 's'} with a final decision.`
-                    : 'No applications have reached a final decision yet.'}
-                </p>
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-hairline)' }}>
-                  <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, marginBottom: 10 }}>Advanced vs. declined — does one take longer?</p>
-                  <TimeToHireByOutcome data={report.avgTimeToHireByOutcome} />
+              <SectionCard title="Time-to-Hire Distribution" subtitle="Days from application to HR's final call, across every decided application" delay={0.02}>
+                {/* This card's own content is short and fixed-height while
+                    its grid sibling ("In Progress Candidates") can run
+                    taller — the grid's stretch still matches both cards'
+                    heights, so without this the chart clung to the top with
+                    a large dead gap below it. flex:1 + centering here lets
+                    it float in the middle of whatever extra room exists
+                    instead. */}
+                <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <TimeToHireDistributionChart rows={report.timeToHireDistribution} emptyMessage="No applications have reached a final decision yet." />
                 </div>
               </SectionCard>
             </div>
@@ -834,15 +886,28 @@ export function HrHeadDashboard({ nav, profile }) {
                 )}
               </SectionCard>
               <SectionCard title="Interview Tone" subtitle="AI-read tone across every evaluated video answer" delay={0.06}>
-                <SentimentBar sentiment={report.sentiment} />
-                <div style={{ display: 'flex', gap: 24, borderTop: '1px solid var(--border-hairline)', paddingTop: 16, marginTop: 4 }}>
-                  <div>
-                    <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Avg Resume Score</div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-2xl)' }}>{report.scores.avgResume != null ? `${report.scores.avgResume}%` : '—'}</div>
+                {/* Top Candidates can run to 8-10 ranked rows while this
+                    card's own content (a compact donut + one stat row)
+                    stays short — the grid's stretch still matches both
+                    cards' heights, so without this the donut+stats used to
+                    cluster at the top with a large dead gap below them.
+                    flex:1 here makes this inner column fill that stretched
+                    height itself, so the donut can float centered in
+                    whatever extra room exists instead of the card just
+                    being mostly empty. */}
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: 18 }}>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                    <SentimentBar sentiment={report.sentiment} />
                   </div>
-                  <div>
-                    <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Avg Interview Score</div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-2xl)' }}>{report.scores.avgInterview != null ? `${report.scores.avgInterview}%` : '—'}</div>
+                  <div style={{ display: 'flex', gap: 24, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Avg Resume Score</div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-2xl)' }}>{report.scores.avgResume != null ? `${report.scores.avgResume}%` : '—'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 'var(--text-xs)', opacity: 0.6 }}>Avg Interview Score</div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--text-2xl)' }}>{report.scores.avgInterview != null ? `${report.scores.avgInterview}%` : '—'}</div>
+                    </div>
                   </div>
                 </div>
               </SectionCard>
@@ -859,17 +924,40 @@ export function HrHeadDashboard({ nav, profile }) {
 
             <div className="hr-two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
               <SectionCard title="Applications by Category" subtitle="Where interest is concentrated">
-                <HorizontalBarChart rows={report.categoryBreakdown.map((c) => ({ label: c.category, count: c.count }))} emptyMessage="No applications yet." />
+                {/* A donut, same treatment as "Job Postings by Status" next
+                    to it — top 5 categories get their own hue from the
+                    validated categorical palette, anything past that folds
+                    into one neutral "Other" slice rather than crowding the
+                    wheel with a 6th+ color. */}
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <ShareDonut
+                    segments={buildCategoryDonutSegments(report.categoryBreakdown)}
+                    totalNoun="Application"
+                    emptyMessage="No applications yet."
+                  />
+                </div>
               </SectionCard>
               <SectionCard title="Job Postings by Status" subtitle="Published, draft, and closed" delay={0.06}>
-                <HorizontalBarChart
-                  rows={[
-                    { label: 'Published', count: report.jobStats.published },
-                    { label: 'Draft', count: report.jobStats.draft },
-                    { label: 'Closed', count: report.jobStats.closed },
-                  ]}
-                  emptyMessage="No job postings yet."
-                />
+                {/* Only ever 3 rows (published/draft/closed), so a bar chart
+                    stayed short no matter how many postings exist — stuck at
+                    the top of the card with a growing dead gap below it as
+                    "Applications by Category" (which scales with however
+                    many categories are in use) stretched this row taller.
+                    Published/draft/closed are parts of one whole the same
+                    way interview sentiment is, so the same donut treatment
+                    (centered via flex, like Interview Tone above) fits both
+                    the data shape and the available space. */}
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <ShareDonut
+                    segments={[
+                      { key: 'published', label: 'Published', value: report.jobStats.published, color: '#0ca30c' },
+                      { key: 'draft', label: 'Draft', value: report.jobStats.draft, color: 'var(--gray-500)' },
+                      { key: 'closed', label: 'Closed', value: report.jobStats.closed, color: 'var(--red-700)' },
+                    ]}
+                    totalNoun="Posting"
+                    emptyMessage="No job postings yet."
+                  />
+                </div>
               </SectionCard>
             </div>
 

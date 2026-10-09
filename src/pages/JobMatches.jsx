@@ -66,6 +66,7 @@ const MATCHING_MESSAGES = [
 ];
 
 const CHECK_ICON = <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>;
+const REFRESH_ICON = <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>;
 
 // A posting is only ever "new" for a short window after it first went
 // live — past that it's just a normal open role, badge or not.
@@ -273,9 +274,23 @@ export function JobMatches({ profile, nav }) {
               )}
             </div>
             {!loading && (
-              <Button variant="ghost" size="sm" onClick={handleCheckNewMatches} disabled={rechecking}>
-                {rechecking ? 'Checking…' : 'Check for New Matches'}
-              </Button>
+              <button
+                type="button"
+                onClick={handleCheckNewMatches}
+                disabled={rechecking}
+                aria-label="Check for new matches"
+                title="Check for new matches"
+                className="btn-animate"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: rechecking ? 'default' : 'pointer',
+                  background: 'var(--surface-page-alt)', color: 'var(--text-primary)', opacity: rechecking ? 0.6 : 1,
+                }}
+              >
+                <span style={{ display: 'inline-flex', animation: rechecking ? 'spin 0.7s linear infinite' : 'none' }}>
+                  {REFRESH_ICON}
+                </span>
+              </button>
             )}
           </div>
           {recheckError && <p style={{ fontSize: 'var(--text-xs)', color: 'var(--red-700)', margin: '8px 0 0' }}>{recheckError}</p>}
