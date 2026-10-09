@@ -338,6 +338,21 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'declined', label: 'Declined' },
 ];
 
+// After a Reopen, status resets to 'submitted' but the applicant's prior
+// interview recording/evaluation isn't cleared (ensureAssignedResponses in
+// lib/interview.js is idempotent — it returns the existing answers rather
+// than wiping them) — so "status is submitted" alone doesn't actually mean
+// "still needs to record an interview." Checking interviewCompleted too
+// means a reopened, already-interviewed applicant goes straight back to a
+// final Advance/Decline call instead of being sent through "Advance to
+// Interview" again for something that's already on file.
+function nextAdvanceStatus(s) {
+  return s.status === 'submitted' && !s.interviewCompleted ? 'interview_stage' : 'advanced';
+}
+function nextAdvanceLabel(s) {
+  return nextAdvanceStatus(s) === 'interview_stage' ? 'Advance to Interview' : 'Advance';
+}
+
 function matchesStatusFilter(s, filter) {
   if (filter === 'all') return true;
   if (filter === 'interview_stage_pending') return s.status === 'interview_stage' && !s.interviewCompleted;
@@ -1284,8 +1299,8 @@ function DecisionReviewModal({
 }) {
   const actionLabel = toStatus === 'declined' ? 'Decline' : toStatus === 'interview_stage' ? 'Advance to Interview' : 'Advance';
   const isDecline = toStatus === 'declined';
-  const advanceTo = s.status === 'submitted' ? 'interview_stage' : 'advanced';
-  const advanceLabel = s.status === 'submitted' ? 'Advance to Interview' : 'Advance';
+  const advanceTo = nextAdvanceStatus(s);
+  const advanceLabel = nextAdvanceLabel(s);
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: 'rgba(20,10,10,0.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div
@@ -1433,9 +1448,9 @@ function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelect
           <>
             <Button
               variant="strong" size="sm" disabled={deciding}
-              onClick={() => onRequestReview(s.applicationId, s.status === 'submitted' ? 'interview_stage' : 'advanced')}
+              onClick={() => onRequestReview(s.applicationId, nextAdvanceStatus(s))}
             >
-              {ADVANCE_ICON} {s.status === 'submitted' ? 'Advance to Interview' : 'Advance'}
+              {ADVANCE_ICON} {nextAdvanceLabel(s)}
             </Button>
             <Button variant="outline" size="sm" disabled={deciding} onClick={() => onRequestReview(s.applicationId, 'declined')}>{DECLINE_ICON} Decline</Button>
           </>
@@ -2599,11 +2614,18 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                           )}
                                           {a.status === 'submitted' && profile?.role === 'hr_personnel' && isDecisionsTab && (
                                             <div style={{ marginTop: 16, borderTop: '1px solid var(--border-hairline)', paddingTop: 16 }}>
-                                              <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 10px' }}>
-                                                Advancing unlocks the video interview for this applicant.
-                                              </p>
+                                              {/* A reopened applicant can land back at 'submitted' with their
+                                                  prior interview recording/score still intact (Reopen doesn't
+                                                  clear it) — nextAdvanceStatus skips straight to 'advanced' for
+                                                  that case instead of sending them through an interview they've
+                                                  already done. */}
+                                              {nextAdvanceStatus(s) === 'interview_stage' && (
+                                                <p style={{ fontSize: 'var(--text-xs)', opacity: 0.6, margin: '0 0 10px' }}>
+                                                  Advancing unlocks the video interview for this applicant.
+                                                </p>
+                                              )}
                                               <div style={{ display: 'flex', gap: 10 }}>
-                                                <Button variant="strong" size="sm" onClick={() => handleDecide(s.applicationId, 'interview_stage')} disabled={decidingId === s.applicationId}>{ADVANCE_ICON} Advance to Interview</Button>
+                                                <Button variant="strong" size="sm" onClick={() => handleDecide(s.applicationId, nextAdvanceStatus(s))} disabled={decidingId === s.applicationId}>{ADVANCE_ICON} {nextAdvanceLabel(s)}</Button>
                                                 <Button variant="outline" size="sm" onClick={() => handleDecide(s.applicationId, 'declined')} disabled={decidingId === s.applicationId}>{DECLINE_ICON} Decline</Button>
                                               </div>
                                             </div>
