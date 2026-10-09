@@ -1,7 +1,7 @@
 // Applicant — record video answers to the questions assigned to this
 // application (count is HR Head-configurable, see screening_settings), one
 // at a time, using the browser's camera + mic.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Header } from '../components/layout/Header/Header.jsx';
 import { Button } from '../components/core/Button/Button.jsx';
 import { ConfirmModal } from '../components/core/ConfirmModal/ConfirmModal.jsx';
@@ -46,7 +46,7 @@ const INFO_ICONS = {
 const INTERVIEW_INSTRUCTIONS = [
   { icon: 'eye', title: 'Questions stay hidden until you click Start', body: 'This keeps things fair for every applicant: nobody gets extra time to prepare or look up an answer beforehand.' },
   { icon: 'clock', title: '5 seconds to prepare, then 1 minute to answer', body: 'Once you click Start, a short countdown gives you a moment to get ready before recording begins automatically.' },
-  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record, before or after submitting, up to 3 times total for that one question — but you have 5 minutes total per question to use them, so don’t step away once you’ve started.' },
+  { icon: 'redo', title: `Up to ${MAX_ATTEMPTS} attempts per question`, body: 'Not happy with a take? Re-record, before or after submitting, up to 3 times total for that one question. You have 5 minutes total per question to use them, so don’t step away once you’ve started.' },
   { icon: 'camera', title: "We'll check your camera & mic first", body: "Right after this, you'll confirm HR can actually see and hear you before any question starts recording." },
   { icon: 'check', title: 'Once every question is submitted, HR reviews it', body: "There's no editing an answer after that, so take your time on each take before hitting Submit." },
 ];
@@ -598,6 +598,10 @@ function DeviceCheck({ stream, error, videoRef, onContinue }) {
 function IntroRecorder({ applicantId, applicationId, stream, onSubmitted }) {
   const [mode, setMode] = useState('locked');
   const [recordedBlob, setRecordedBlob] = useState(null);
+  // Same fix as AnswerRecorder's own previewUrl — a fresh blob URL on every
+  // render makes the preview <video> silently reset and pause itself.
+  const previewUrl = useMemo(() => (recordedBlob ? URL.createObjectURL(recordedBlob) : null), [recordedBlob]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
@@ -699,7 +703,7 @@ function IntroRecorder({ applicantId, applicationId, stream, onSubmitted }) {
         <div style={{ textAlign: 'center', maxWidth: 460 }}>
           <strong style={{ fontSize: 'var(--text-lg)' }}>Quick Introduction</strong>
           <p style={{ margin: '4px 0 0', fontSize: 'var(--text-sm)', opacity: 0.75 }}>
-            Before the questions, record a short {INTRO_RECORD_SECONDS}-second clip saying your name and a quick hello. This isn't scored — HR just gets to see who they're talking to.
+            Before the questions, record a short {INTRO_RECORD_SECONDS}-second clip saying your name and a quick hello. This isn't scored. HR just gets to see who they're talking to.
           </p>
         </div>
 
@@ -730,7 +734,7 @@ function IntroRecorder({ applicantId, applicationId, stream, onSubmitted }) {
           )}
 
           {mode === 'preview' && recordedBlob && (
-            <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+            <video src={previewUrl} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
           )}
 
           {mode === 'submitted' && (
@@ -785,6 +789,16 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
   // keeps counting down from the persisted first_shown_at regardless.
   const [revealed, setRevealed] = useState(!!response.video_path || !!response.first_shown_at);
   const [recordedBlob, setRecordedBlob] = useState(null);
+  // Stabilized to one URL per actual recording, not recreated on every
+  // render — the preview <video> used to get a *brand new* blob URL
+  // assigned to its src every time this component re-rendered (e.g. every
+  // second, once the budget countdown above started ticking during preview
+  // mode), which makes a <video> element silently reset to 0:00 and pause
+  // itself, since as far as the browser's concerned its source just
+  // changed. Revoked on cleanup so object URLs don't pile up in memory
+  // across re-records.
+  const previewUrl = useMemo(() => (recordedBlob ? URL.createObjectURL(recordedBlob) : null), [recordedBlob]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [readySecondsLeft, setReadySecondsLeft] = useState(READY_SECONDS);
@@ -1305,7 +1319,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
 
           {mode === 'preview' && recordedBlob && (
             <div>
-              <video src={URL.createObjectURL(recordedBlob)} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+              <video src={previewUrl} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
               {transcriptAttempted && (
                 <div style={{ marginTop: 12, background: 'var(--surface-page-alt)', borderRadius: 10, padding: '16px 18px' }}>
                   <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -1416,7 +1430,7 @@ function AnswerRecorder({ response, index, total, applicantId, applicationId, jo
                         ? 'Submitting your final attempt…'
                         : atAttemptLimit
                           ? `Last attempt (${MAX_ATTEMPTS} of ${MAX_ATTEMPTS}), submitting automatically and moving on…`
-                          : 'Time expired for this question — submitting automatically and moving on…'}
+                          : 'Time expired for this question. Submitting automatically and moving on…'}
                     </span>
                   ) : (
                     <Button variant="outline" size="sm" onClick={reRecord} disabled={uploading}>Re-record ({attemptsLeft} left)</Button>

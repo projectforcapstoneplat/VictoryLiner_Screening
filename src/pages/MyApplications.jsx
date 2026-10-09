@@ -82,13 +82,17 @@ function getStatusInfo(application, completion, resumeEvaluation, globalMinPerce
   if (resumeEvaluation.score < minPercent) {
     return { label: 'Below Minimum Resume Match', bg: 'var(--surface-page-alt)', fg: 'var(--text-primary)' };
   }
-  // Decision not made yet — still worth letting them revisit the interview
-  // (to finish it, or re-record before HR reviews it).
   const interviewComplete = completion && completion.total > 0 && completion.answered === completion.total;
   if (!interviewComplete) {
     return { label: 'Action Needed — Complete Video Interview', bg: 'var(--pink-100)', fg: 'var(--red-700)', interviewCta: 'Continue to Video Interview' };
   }
-  return { label: 'Under Review', bg: 'var(--pink-100)', fg: 'var(--red-700)', interviewCta: 'Review Video Interview' };
+  // No interviewCta once every question is answered — "Review Video
+  // Interview" used to let the applicant revisit/re-record before HR's
+  // decision, but sitting right next to an "Under Review" badge, it read as
+  // if it would show HR's own review, which applicants never see. Falls
+  // back to the same "View Job Posting" link every other no-action status
+  // already uses below, instead of a confusing CTA.
+  return { label: 'Under Review', bg: 'var(--pink-100)', fg: 'var(--red-700)' };
 }
 
 // Only meaningful while genuinely still waiting on the applicant to finish
