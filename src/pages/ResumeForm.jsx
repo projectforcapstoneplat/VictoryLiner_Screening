@@ -1195,7 +1195,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   </FadeSection>
 
                   <FadeSection delay={0.06} style={SECTION_STYLE}>
-                    <SectionHeader icon={SECTION_ICONS.preferences} title="Work Eligibility" />
+                    <SectionHeader icon={SECTION_ICONS.preferences} title="Additional Info" />
                     <label style={{ display: 'flex', gap: 10, fontSize: 'var(--text-sm)', alignItems: 'center' }}>
                       <input type="checkbox" checked={nbiClearance} onChange={(e) => setNbiClearance(e.target.checked)} />
                       I have a valid NBI or Police Clearance
