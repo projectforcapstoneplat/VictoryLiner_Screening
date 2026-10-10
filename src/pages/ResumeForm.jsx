@@ -433,6 +433,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
     if (data.email) setEmail(data.email);
     if (data.phone) setPhone(formatPhoneInput(data.phone));
     if (data.currentLocation) setCurrentLocation(data.currentLocation);
+    if (data.age != null) setAge(String(data.age));
     if (data.educationLevel) setEducationLevel(data.educationLevel);
     if (data.summary) setSummary(data.summary);
     if (data.skills?.length) setSkills(data.skills);
@@ -1194,7 +1195,7 @@ export function ResumeForm({ profile, nav, onResumeSaved }) {
                   </FadeSection>
 
                   <FadeSection delay={0.06} style={SECTION_STYLE}>
-                    <SectionHeader icon={SECTION_ICONS.preferences} title="Work Preferences" />
+                    <SectionHeader icon={SECTION_ICONS.preferences} title="Work Eligibility" />
                     <label style={{ display: 'flex', gap: 10, fontSize: 'var(--text-sm)', alignItems: 'center' }}>
                       <input type="checkbox" checked={nbiClearance} onChange={(e) => setNbiClearance(e.target.checked)} />
                       I have a valid NBI or Police Clearance
