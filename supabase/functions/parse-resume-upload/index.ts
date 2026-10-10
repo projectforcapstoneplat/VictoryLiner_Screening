@@ -41,6 +41,7 @@ const PARSE_SCHEMA = {
     email: { type: 'STRING' },
     phone: { type: 'STRING' },
     currentLocation: { type: 'STRING', description: 'City/Province only, e.g. "Quezon City".' },
+    birthDate: { type: 'STRING', description: 'Date of birth, in YYYY-MM-DD format, ONLY if explicitly stated on the resume (e.g. a "Date of Birth" line in a personal info section). Leave empty if not stated — never infer or estimate it.' },
     educationLevel: { type: 'STRING', description: `Exactly one of: ${EDUCATION_LEVELS.join(', ')}. Leave empty if unclear.` },
     summary: { type: 'STRING', description: 'A short professional summary — write one only if the resume has a clear intro/objective section; otherwise leave empty rather than inventing one.' },
     skills: { type: 'ARRAY', items: { type: 'STRING' } },
@@ -90,7 +91,7 @@ const PARSE_SCHEMA = {
       },
     },
   },
-  required: ['fullName', 'email', 'phone', 'currentLocation', 'educationLevel', 'summary', 'skills', 'workExperience', 'education', 'certifications'],
+  required: ['fullName', 'email', 'phone', 'currentLocation', 'birthDate', 'educationLevel', 'summary', 'skills', 'workExperience', 'education', 'certifications'],
 };
 
 const SYSTEM_PROMPT =
@@ -315,6 +316,23 @@ function extractDocxText(xml: string): string {
     .replace(/&apos;/g, "'");
 }
 
+// Only ever called on a resume-stated birth date, never on anything the
+// applicant can edit afterward — age itself stays the plain, self-declared
+// integer column (0036_applicant_resumes_age.sql), just pre-filled here
+// instead of starting blank. The birth date itself is never stored; it's
+// discarded the moment age is computed, same as every other parsed field
+// until the applicant's own "Save Resume" click persists the reviewed form.
+function computeAgeFromBirthDate(normalizedBirthDate: string): number | null {
+  const birth = new Date(`${normalizedBirthDate}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  const birthdayPassedThisYear = now.getUTCMonth() > birth.getUTCMonth()
+    || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() >= birth.getUTCDate());
+  if (!birthdayPassedThisYear) age -= 1;
+  return age >= 16 && age <= 100 ? age : null;
+}
+
 function normalizeDate(value: unknown): string {
   if (typeof value !== 'string') return '';
   const v = value.trim();
@@ -344,6 +362,10 @@ function buildResponseData(parsed: any) {
     email: parsed.email ?? '',
     phone: parsed.phone ?? '',
     currentLocation: parsed.currentLocation ?? '',
+    age: (() => {
+      const normalized = normalizeDate(parsed.birthDate);
+      return normalized ? computeAgeFromBirthDate(normalized) : null;
+    })(),
     educationLevel: EDUCATION_LEVELS.includes(parsed.educationLevel) ? parsed.educationLevel : '',
     summary: parsed.summary ?? '',
     skills: Array.isArray(parsed.skills) ? parsed.skills.filter((s: unknown) => typeof s === 'string' && s.trim()) : [],
@@ -373,6 +395,7 @@ const GROQ_JSON_SHAPE = `Respond with ONLY a single JSON object (no markdown, no
   "email": string,
   "phone": string,
   "currentLocation": string (city/province only, e.g. "Quezon City"),
+  "birthDate": string (YYYY-MM-DD, ONLY if explicitly stated on the resume, else ""),
   "educationLevel": one of exactly: ${EDUCATION_LEVELS.map((l) => `"${l}"`).join(', ')}, or "" if unclear,
   "summary": string (only if the resume has a clear intro/objective section, else ""),
   "skills": string[],
