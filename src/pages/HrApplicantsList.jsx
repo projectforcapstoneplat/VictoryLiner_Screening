@@ -94,6 +94,7 @@ const REFRESH_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none"
 const WATCH_ICON = <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg>;
 const ADVANCE_ICON = <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5 9.5 18 20 6" /></svg>;
 const DECLINE_ICON = <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.8} strokeLinecap="round"><line x1="5" y1="5" x2="19" y2="19" /><line x1="19" y1="5" x2="5" y2="19" /></svg>;
+const LOCK_ICON = <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1 }}><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
 const CAL_PREV_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M15 5 8 12l7 7" /></svg>;
 const CAL_NEXT_ICON = <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>;
 
@@ -1295,7 +1296,7 @@ function DecisionReviewModal({
   s, a, toStatus, onConfirm, onCancel, onPickAction, confirming,
   evaluation, evalStat, evalErrorMsg, onRetryResume,
   interviewResponses, interviewEvaluations, interviewEvalStatus, interviewEvalErrors, onRetryInterview, onResetAttempts, expectedCount,
-  positionsFilled, openPositions,
+  positionsFilled, openPositions, locked, topName,
 }) {
   const actionLabel = toStatus === 'declined' ? 'Decline' : toStatus === 'interview_stage' ? 'Advance to Interview' : 'Advance';
   const isDecline = toStatus === 'declined';
@@ -1359,21 +1360,38 @@ function DecisionReviewModal({
 
         <div style={{ padding: '16px 26px', borderTop: '1px solid var(--border-hairline)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           {toStatus ? (
-            <>
-              <Button variant="ghost" size="md" onClick={onCancel} disabled={confirming}>Cancel</Button>
-              <Button variant={isDecline ? 'outline' : 'strong'} size="md" onClick={onConfirm} disabled={confirming || !a}>
-                {confirming ? 'Saving…' : <>{isDecline ? DECLINE_ICON : ADVANCE_ICON} {`Confirm ${actionLabel}`}</>}
-              </Button>
-            </>
+            // locked shouldn't be reachable here — the only path to a
+            // pre-picked toStatus is the card's own Advance/Decline buttons,
+            // which are already hidden while locked (see DecisionCandidateCard)
+            // — but re-checked anyway rather than trusting that no other
+            // path can ever set toStatus on a locked candidate.
+            locked ? (
+              <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6, fontStyle: 'italic' }}>
+                {LOCK_ICON} {topName || 'The top-ranked candidate'} needs to be decided first.
+              </span>
+            ) : (
+              <>
+                <Button variant="ghost" size="md" onClick={onCancel} disabled={confirming}>Cancel</Button>
+                <Button variant={isDecline ? 'outline' : 'strong'} size="md" onClick={onConfirm} disabled={confirming || !a}>
+                  {confirming ? 'Saving…' : <>{isDecline ? DECLINE_ICON : ADVANCE_ICON} {`Confirm ${actionLabel}`}</>}
+                </Button>
+              </>
+            )
           ) : (
             // No "Close" here — the circular X in the header already does
             // the exact same thing (onCancel), and having both was a
             // redundant second exit right next to the real decisions.
             (s.status === 'submitted' || s.status === 'interview_stage') && (
-              <>
-                <Button variant="outline" size="md" onClick={() => onPickAction('declined')} disabled={!a}>{DECLINE_ICON} Decline</Button>
-                <Button variant="strong" size="md" onClick={() => onPickAction(advanceTo)} disabled={!a}>{ADVANCE_ICON} {advanceLabel}</Button>
-              </>
+              locked ? (
+                <span style={{ fontSize: 'var(--text-sm)', opacity: 0.6, fontStyle: 'italic' }}>
+                  {LOCK_ICON} Waiting on {topName || 'the top-ranked candidate'} to be decided first.
+                </span>
+              ) : (
+                <>
+                  <Button variant="outline" size="md" onClick={() => onPickAction('declined')} disabled={!a}>{DECLINE_ICON} Decline</Button>
+                  <Button variant="strong" size="md" onClick={() => onPickAction(advanceTo)} disabled={!a}>{ADVANCE_ICON} {advanceLabel}</Button>
+                </>
+              )
             )
           )}
         </div>
@@ -1387,7 +1405,7 @@ const RANK_MEDAL = ['🥇', '🥈', '🥉'];
 // One candidate within a job's ranked group — Advance/Decline both open the
 // review modal (handleRequestReview) instead of deciding straight from
 // here, same reasoning as the modal's own comment above.
-function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelectMode, selected, onToggleSelect, compareMode, compareSelected, compareDisabled, onToggleCompare, positionsFilled }) {
+function DecisionCandidateCard({ s, rank, topName, deciding, onRequestReview, multiSelectMode, selected, onToggleSelect, compareMode, compareSelected, compareDisabled, onToggleCompare, positionsFilled }) {
   // Only the final call (interview_stage -> advanced) actually spends a
   // position — advancing someone from submitted into the video-interview
   // stage doesn't, so the tag only applies to candidates one decision away
@@ -1395,6 +1413,7 @@ function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelect
   // — Advance/Decline stay fully clickable either way, still HR's call.
   const showPositionsFilledTag = positionsFilled && s.status === 'interview_stage';
   const isTop = rank === 1;
+  const locked = rank > 1;
   return (
     <div
       className="hover-lift"
@@ -1443,17 +1462,23 @@ function DecisionCandidateCard({ s, rank, deciding, onRequestReview, multiSelect
         <ScoreBadge score={s.resumeScore} label="Resume" />
         <ScoreBadge score={s.interviewScore} label="Interview" />
       </div>
-      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
         {s.status === 'submitted' || s.status === 'interview_stage' ? (
-          <>
-            <Button
-              variant="strong" size="sm" disabled={deciding}
-              onClick={() => onRequestReview(s.applicationId, nextAdvanceStatus(s))}
-            >
-              {ADVANCE_ICON} {nextAdvanceLabel(s)}
-            </Button>
-            <Button variant="outline" size="sm" disabled={deciding} onClick={() => onRequestReview(s.applicationId, 'declined')}>{DECLINE_ICON} Decline</Button>
-          </>
+          locked ? (
+            <span style={{ fontSize: 'var(--text-xs)', opacity: 0.55, fontStyle: 'italic', maxWidth: 160, textAlign: 'right' }}>
+              {LOCK_ICON} Waiting on {topName || 'the top candidate'}
+            </span>
+          ) : (
+            <>
+              <Button
+                variant="strong" size="sm" disabled={deciding}
+                onClick={() => onRequestReview(s.applicationId, nextAdvanceStatus(s))}
+              >
+                {ADVANCE_ICON} {nextAdvanceLabel(s)}
+              </Button>
+              <Button variant="outline" size="sm" disabled={deciding} onClick={() => onRequestReview(s.applicationId, 'declined')}>{DECLINE_ICON} Decline</Button>
+            </>
+          )
         ) : null}
       </div>
     </div>
@@ -1985,9 +2010,20 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
   }
 
   async function handleBulkDecline() {
-    const targets = filtered.filter((s) => selectedIds.has(s.applicationId) && (s.status === 'submitted' || s.status === 'interview_stage'));
-    if (targets.length === 0) return;
-    if (!window.confirm(`Decline ${targets.length} selected applicant${targets.length === 1 ? '' : 's'}? This can't be bulk-undone.`)) return;
+    const selected = filtered.filter((s) => selectedIds.has(s.applicationId) && (s.status === 'submitted' || s.status === 'interview_stage'));
+    // Bulk decline goes straight to updateApplicationStatus, bypassing the
+    // card/modal entirely — without this filter it'd be a trivial way around
+    // the same rank lock those enforce (see decisionRankInfo above). Off the
+    // Decisions tab the ranking concept doesn't apply at all (decisionRankInfo
+    // is empty there), so nothing gets filtered outside of it.
+    const targets = isDecisionsTab ? selected.filter((s) => (decisionRankInfo.get(s.applicationId)?.rank || 1) === 1) : selected;
+    const lockedCount = selected.length - targets.length;
+    if (targets.length === 0) {
+      if (lockedCount > 0) window.alert(`${lockedCount} selected applicant${lockedCount === 1 ? '' : 's'} can't be declined yet — they're not the top-ranked candidate for their job.`);
+      return;
+    }
+    const skipNote = lockedCount > 0 ? ` (${lockedCount} skipped — not top-ranked yet)` : '';
+    if (!window.confirm(`Decline ${targets.length} selected applicant${targets.length === 1 ? '' : 's'}${skipNote}? This can't be bulk-undone.`)) return;
     setBulkDeclining(true);
     let failed = 0;
     for (const s of targets) {
@@ -2172,6 +2208,27 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         return catDiff !== 0 ? catDiff : (a.job?.title || '').localeCompare(b.job?.title || '');
       });
   }, [filtered, isDecisionsTab]);
+
+  // Per-applicant lookup of their rank within their own job's decision
+  // queue, plus the name of whoever's currently #1 there — keyed off
+  // groupedByJob's own ordering (already rank order, see its comment
+  // above) so this always agrees with the medal shown on their card. Only
+  // the #1 candidate per job is allowed an Advance/Decline verdict; anyone
+  // ranked below them has to wait until #1 is settled (advanced or
+  // declined), at which point the next-ranked candidate becomes #1 and
+  // unlocks — a professor-suggested policy so HR considers the strongest
+  // candidate for a job before anyone weaker, rather than deciding in
+  // whatever order happens to be convenient.
+  const decisionRankInfo = useMemo(() => {
+    const map = new Map();
+    if (!groupedByJob) return map;
+    for (const g of groupedByJob) {
+      g.decisionRows.forEach((row, i) => {
+        map.set(row.applicationId, { rank: i + 1, topName: g.decisionRows[0]?.name || '' });
+      });
+    }
+    return map;
+  }, [groupedByJob]);
 
   // Which job groups have "See All" expanded past the top-3 ranked
   // preview — per job posting id, reset implicitly whenever the filters
@@ -2405,6 +2462,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
                                   key={s.applicationId}
                                   s={s}
                                   rank={i + 1}
+                                  topName={decisionRows[0]?.name}
                                   deciding={decidingId === s.applicationId}
                                   onRequestReview={handleRequestReview}
                                   multiSelectMode={multiSelectMode && profile?.role === 'hr_personnel'}
@@ -2785,6 +2843,7 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
         const reviewJobOpenPositions = reviewRow.job?.open_positions;
         const reviewJobAdvancedCount = advancedCountByJob.get(reviewRow.jobId) || 0;
         const positionsFilled = reviewJobOpenPositions > 0 && reviewJobAdvancedCount >= reviewJobOpenPositions;
+        const rankInfo = decisionRankInfo.get(reviewTarget.applicationId);
         return (
           <DecisionReviewModal
             s={reviewRow}
@@ -2792,6 +2851,8 @@ export function HrApplicantsList({ nav, profile, job, stageFilter }) {
             toStatus={reviewTarget.toStatus}
             positionsFilled={positionsFilled}
             openPositions={reviewJobOpenPositions}
+            locked={(rankInfo?.rank || 1) > 1}
+            topName={rankInfo?.topName}
             confirming={reviewConfirming}
             onConfirm={handleConfirmReview}
             onCancel={() => setReviewTarget(null)}
